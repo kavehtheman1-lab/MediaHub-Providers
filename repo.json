@@ -1,0 +1,20 @@
+{
+  "name": "MediaHub Providers",
+  "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
+  "version": 1,
+  "providers": [
+    {
+      "name": "Akwam",
+      "id": "akwam",
+      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/akwam.js",
+      "version": "1.0.0",
+      "language": "ar",
+      "types": [
+        "Movie",
+        "TvSeries",
+        "Anime",
+        "AsianDrama"
+      ]
+    }
+  ]
+}

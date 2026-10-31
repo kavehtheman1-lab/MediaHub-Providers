@@ -277,14 +277,37 @@
           else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
         });
         if (!direct.length && q.d >= 1) {
+          var pick = function (key) { var mm = txt2.match(new RegExp('["\']?' + key + '["\']?\\s*[:=]\\s*["\']([^"\']{1,90})["\']', 'i')); return mm ? mm[1] : ''; };
+          var acc = pick('account'), mir = pick('mirror'), pth = pick('path').replace(/^\/+|\/+$/g, '');
+          if (acc && mir && pth) {
+            var cand = [host(q.u)].concat(Object.keys(hosts).filter(function (h) { return /cvt|cdn|hls|stream|mega/i.test(h); }));
+            if (/^[\w.-]+\.[a-z]{2,}$/i.test(mir)) cand.push(mir);
+            for (var ci = 0; ci < cand.length && !direct.length; ci++) {
+              var hu = 'https://' + cand[ci] + '/hls/' + acc + '/' + mir + '/' + pth + '/master.m3u8';
+              try { var ht = await MediaHub.getText(hu, { referer: q.u }); eReport.push('hls ' + cand[ci] + ' ' + ht.slice(0, 7)); if (/^#EXTM3U/.test(ht)) direct.push(hu); }
+              catch (e) { eReport.push('hls ' + cand[ci] + ' ' + (e && e.message)); }
+            }
+          }
+        }
+        if (!direct.length && q.d >= 1) {
           eReport.push(peek(txt2));
           var pd = pageData(txt);
           if (pd) eReport.push('data: ' + keyPaths(pd.props || pd, '', 0, []).join(', ').slice(0, 320));
           var sm = txt.match(/<script[^>]+src=["']([^"']*(?:assets|chunks)[^"']*\.js)["']/i);
           if (sm && !crawled.js) {
             crawled.js = 1;
-            try { eReport.push('api: ' + apiHints(await MediaHub.getText(abs(sm[1], q.u), { referer: q.u })).join(' , ')); } catch (e) { eReport.push('api: js ' + (e && e.message)); }
+            var jt = '';
+            try { jt = await MediaHub.getText(abs(sm[1], q.u), { referer: q.u }); } catch (e) { eReport.push('js ' + (e && e.message)); }
+            if (jt) {
+              eReport.push('api: ' + apiHints(jt).join(' , '));
+              var km = jt.indexOf('master.m3u8');
+              if (km >= 0) eReport.push('m3u8@ ' + clean(jt.slice(Math.max(0, km - 170), km + 20)));
+              var ka = jt.search(/account/);
+              if (ka >= 0) eReport.push('acct@ ' + clean(jt.slice(Math.max(0, ka - 80), ka + 90)));
+            }
           }
+          var ha = txt2.search(/account|mirror/i);
+          if (ha >= 0) eReport.push('html@ ' + clean(txt2.slice(Math.max(0, ha - 50), ha + 170)));
         }
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {

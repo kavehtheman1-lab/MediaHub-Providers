@@ -68,6 +68,27 @@
     return groups.filter(function (g) { return g.items.length; });
   }
 
+
+  function toBase(c, a) { return (c < a ? '' : toBase(parseInt(c / a, 10), a)) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36)); }
+  function unpackAll(text) {
+    var out = '', re = /\}\('((?:[^'\\]|\\.)*)',\s*(\d+),\s*(\d+),\s*'((?:[^'\\]|\\.)*)'\.split\('\|'\)/g, m;
+    while ((m = re.exec(text))) {
+      try {
+        var pk = m[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\'), a = +m[2], c = +m[3], k = m[4].split('|'), d = {};
+        while (c--) d[toBase(c, a)] = k[c] || toBase(c, a);
+        out += '\n' + pk.replace(/\b\w+\b/g, function (w) { return d[w] || w; });
+      } catch (e) {}
+    }
+    return out;
+  }
+  function decodeB64(text) {
+    var out = '', re = /atob\(\s*["']([A-Za-z0-9+\/=]{40,})["']\s*\)/g, m;
+    while ((m = re.exec(text))) { try { out += '\n' + atob(m[1]); } catch (e) {} }
+    return out;
+  }
+  var FILEKEY = /(?:file|src|source|hls|stream|video_url|url)["']?\s*[:=]\s*["'](https?:\\?\/\\?\/[^"'\s<>]+)/gi;
+  var NOTMEDIA = /\.(jpe?g|png|gif|webp|svg|css|js|ico|vtt|srt|json|woff2?|ttf)(\?|$)/i;
+
   MediaHub.registerProvider({
     id: 'tuktukcima',
     name: 'Tuktukcima',
@@ -114,7 +135,7 @@
       }
       function addEmbed(u, from) {
         u = abs(String(u || '').replace(/&amp;/g, '&'), from);
-        if (/^https?:/i.test(u) && !/\.(jpe?g|png|gif|webp|svg|css|js|ico)(\?|$)/i.test(u) && embeds.indexOf(u) < 0) embeds.push(u);
+        if (/^https?:/i.test(u) && !/youtube|youtu\.be/i.test(u) && !NOTMEDIA.test(u) && embeds.indexOf(u) < 0) embeds.push(u);
       }
       for (var i = 0; i < tried.length; i++) {
         var html;
@@ -155,12 +176,30 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
-      for (var j = 0; j < embeds.length && j < 8 && !direct.length; j++) {
-        try { scan(await MediaHub.getText(embeds[j])); } catch (e) {}
+      var queue = embeds.map(function (u) { return { u: u, d: 0 }; }), seenQ = {}, fetched = 0, eReport = [];
+      while (queue.length && fetched < 10 && !direct.length) {
+        var q = queue.shift();
+        if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
+        var txt;
+        try { txt = await MediaHub.getText(q.u); eReport.push(host(q.u) + ' ' + txt.length); }
+        catch (e) { eReport.push(host(q.u) + ' ' + (e && e.message)); continue; }
+        var all = txt + unpackAll(txt) + decodeB64(txt);
+        scan(all);
+        all.replace(FILEKEY, function (m0, u) {
+          u = u.replace(/\\\//g, '/');
+          if (!NOTMEDIA.test(u) && direct.indexOf(u) < 0 && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) direct.push(u);
+          return m0;
+        });
+        if (!direct.length && q.d < 2) {
+          [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {
+            var u2 = abs(n.getAttribute('src') || n.getAttribute('data-src'), q.u);
+            if (/^https?:/i.test(u2) && !/youtube|youtu\.be/i.test(u2)) queue.push({ u: u2, d: q.d + 1 });
+          });
+        }
       }
       if (!direct.length) {
         throw new Error('No direct video link. Servers: ' + (embeds.slice(0, 4).map(host).join(', ') || 'none') +
-          ' | pages: ' + report.join('; ') + ' | iframes ' + stats.iframe + ', buttons ' + stats.nume +
+          ' | embed pages: ' + eReport.join('; ') + ' | pages: ' + report.join('; ') + ' | iframes ' + stats.iframe + ', buttons ' + stats.nume +
           ' | other hosts: ' + Object.keys(hosts).slice(0, 5).join(', '));
       }
       return direct.map(function (u, n) { return { url: u, label: 'Server ' + (n + 1), referer: page }; });

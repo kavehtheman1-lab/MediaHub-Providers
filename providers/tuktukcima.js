@@ -105,29 +105,63 @@
     },
 
     getLinks: async function (cfg, target) {
-      var base = baseOf(cfg), page = target.url || target.id, tried = [page];
+      var base = baseOf(cfg), page = target.url || target.id, tried = [page], report = [];
       var tail = page.charAt(page.length - 1) === '/' ? '' : '/';
       tried.push(page + tail + 'watch/');
-      var direct = [], embeds = [];
+      var direct = [], embeds = [], posts = [], stats = { iframe: 0, nume: 0 }, hosts = {}, h0 = host(base);
       function scan(text) {
         String(text).replace(/\\\//g, '/').replace(MEDIA, function (m) { if (direct.indexOf(m) < 0) direct.push(m); return m; });
       }
+      function addEmbed(u, from) {
+        u = abs(String(u || '').replace(/&amp;/g, '&'), from);
+        if (/^https?:/i.test(u) && !/\.(jpe?g|png|gif|webp|svg|css|js|ico)(\?|$)/i.test(u) && embeds.indexOf(u) < 0) embeds.push(u);
+      }
       for (var i = 0; i < tried.length; i++) {
-        var html; try { html = await getHtml(tried[i]); } catch (e) { continue; }
+        var html;
+        try { html = await getHtml(tried[i]); report.push(tried[i].slice(-14) + ' ' + html.length); }
+        catch (e) { report.push(tried[i].slice(-14) + ' ' + (e && e.message)); continue; }
         scan(html);
         var doc = parse(html);
-        [].forEach.call(doc.querySelectorAll('iframe[src],iframe[data-src],[data-url],[data-src],[data-embed],a[href*="embed"],a[href*="player"]'), function (n) {
-          var u = n.getAttribute('src') || n.getAttribute('data-src') || n.getAttribute('data-url') || n.getAttribute('data-embed') || n.getAttribute('href') || '';
-          u = abs(u, tried[i]);
-          if (/^https?:/i.test(u) && !/\.(jpe?g|png|gif|webp|svg|css|js)(\?|$)/i.test(u) && embeds.indexOf(u) < 0) embeds.push(u);
+        [].forEach.call(doc.querySelectorAll('iframe'), function (n) { stats.iframe++; addEmbed(n.getAttribute('src') || n.getAttribute('data-src') || n.getAttribute('data-lazy-src'), tried[i]); });
+        [].forEach.call(doc.querySelectorAll('[data-url],[data-src],[data-embed],[data-link],a[href*="embed"],a[href*="player"],a[href*="?do=watch"]'), function (n) {
+          addEmbed(n.getAttribute('data-url') || n.getAttribute('data-embed') || n.getAttribute('data-link') || n.getAttribute('data-src') || n.getAttribute('href'), tried[i]);
         });
-        if (direct.length) break;
+        // DooPlay-style server buttons
+        [].forEach.call(doc.querySelectorAll('[data-post][data-nume]'), function (n) {
+          stats.nume++;
+          posts.push({ post: n.getAttribute('data-post'), nume: n.getAttribute('data-nume'), type: n.getAttribute('data-type') || 'movie' });
+        });
+        // any embed-looking URL written in scripts / attributes
+        (html.replace(/\\\//g, '/').match(/https?:\/\/[^"'\s<>\\]+/g) || []).forEach(function (u) {
+          var h = host(u);
+          if (h && h !== h0 && !/google|gstatic|facebook|twitter|cloudflare|wp\.com|w3\.org|schema\.org|jquery|bootstrap|fontawesome|gravatar|youtube\.com\/(?!embed)/i.test(h)) hosts[h] = 1;
+          if (/(embed|player|stream|dood|voe|mixdrop|uqload|vidmoly|filemoon|streamwish|upstream|ok\.ru\/videoembed|vk\.com\/video_ext)/i.test(u) && !/\.(jpe?g|png|gif|webp|svg|css|js)(\?|$)/i.test(u)) addEmbed(u, tried[i]);
+        });
+        if (direct.length || embeds.length || posts.length) break;
+      }
+      for (var k = 0; k < posts.length && k < 6 && !direct.length; k++) {
+        var pj = posts[k], got = '';
+        try {
+          var r = await MediaHub.getJSON(base + '/wp-json/dooplayer/v2/' + pj.post + '/' + pj.type + '/' + pj.nume);
+          got = r.embed_url || r.url || '';
+        } catch (e) {
+          try {
+            var t = await MediaHub.getText(base + '/wp-admin/admin-ajax.php', {
+              method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: 'action=doo_player_ajax&post=' + pj.post + '&nume=' + pj.nume + '&type=' + pj.type
+            });
+            var jm = t.match(/"embed_url"\s*:\s*"([^"]+)/); got = jm ? jm[1].replace(/\\\//g, '/') : (t.match(/src=["']([^"']+)/) || [])[1] || '';
+          } catch (e2) {}
+        }
+        if (got) { scan(got); addEmbed(got, page); }
       }
       for (var j = 0; j < embeds.length && j < 8 && !direct.length; j++) {
-        try { scan(await MediaHub.getText(embeds[j], { headers: { Referer: page } })); } catch (e) {}
+        try { scan(await MediaHub.getText(embeds[j])); } catch (e) {}
       }
       if (!direct.length) {
-        throw new Error('No direct video link. Servers found: ' + (embeds.slice(0, 4).map(host).join(', ') || 'none'));
+        throw new Error('No direct video link. Servers: ' + (embeds.slice(0, 4).map(host).join(', ') || 'none') +
+          ' | pages: ' + report.join('; ') + ' | iframes ' + stats.iframe + ', buttons ' + stats.nume +
+          ' | other hosts: ' + Object.keys(hosts).slice(0, 5).join(', '));
       }
       return direct.map(function (u, n) { return { url: u, label: 'Server ' + (n + 1), referer: page }; });
     }

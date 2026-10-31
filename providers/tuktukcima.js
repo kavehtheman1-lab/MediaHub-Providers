@@ -291,6 +291,20 @@
         }
         if (!direct.length && q.d >= 1) {
           var pd = pageData(txt), tag = q.u.split('/').slice(3, 4).join('');
+          if (pd && pd.props && pd.deferredProps && !crawled['d' + q.u]) {
+            crawled['d' + q.u] = 1;
+            var dn = [];
+            Object.keys(pd.deferredProps).forEach(function (g) { dn = dn.concat(pd.deferredProps[g]); });
+            try {
+              var dj = await MediaHub.getJSON(q.u, { referer: q.u, headers: {
+                'X-Inertia': 'true', 'X-Inertia-Version': pd.version || '', 'X-Inertia-Partial-Component': pd.component || '',
+                'X-Inertia-Partial-Data': dn.join(','), 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html, application/xhtml+xml' } });
+              if (dj && dj.props) Object.keys(dj.props).forEach(function (k) { pd.props[k] = dj.props[k]; });
+              eReport.push('deferred ' + dn.join(',') + ' ok');
+            } catch (e) { eReport.push('deferred ' + dn.join(',') + ' ' + (e && e.message)); }
+          }
+          if (pd && !pd.props) eReport.push('[' + tag + '] pd keys: ' + Object.keys(pd).join(','));
+          else if (pd && pd.props && !direct.length && tag !== 'iframe') eReport.push('[' + tag + '] top: ' + Object.keys(pd).join(',') + (pd.deferredProps ? ' deferred=' + JSON.stringify(pd.deferredProps).slice(0, 80) : ''));
           if (pd && pd.props) {
             var lv = leaves(pd.props, '', [], 0);
             lv.forEach(function (l) { if (/^https?:\/\/[^\s]+\.(m3u8|mp4|mkv|webm)(\?|$)/i.test(l.v) && direct.indexOf(l.v) < 0) direct.push(l.v); });
@@ -302,6 +316,9 @@
               var dom = get(['domain', 'host', 'hostname', 'server']), acc = get(['account', 'account_id', 'accountId']),
                   mir = get(['mirror', 'mirror_id', 'mirrorId']), pth = get(['path', 'hls', 'hls_path']),
                   sto = get(['storage']), att = get(['attachment', 'attachment_id']), nm = get(['name', 'filename', 'file_name']);
+              var atts = (pd.props.attachments || []).filter(function (x) { return x && x.hashId; });
+              if (!att && atts.length) att = atts[0].hashId;
+              if (!nm && pd.props.file) nm = pd.props.file.name || '';
               var cands = [];
               if (dom && acc && mir && pth) cands.push({ u: 'https://' + dom + '/hls/' + acc + '/' + mir + '/' + pth + '/master.m3u8', hls: true });
               if (dom && sto && att && mir && nm) cands.push({ u: 'https://' + dom + '/' + sto + '/' + att + '/' + mir + '/' + encodeURIComponent(nm), hls: false });

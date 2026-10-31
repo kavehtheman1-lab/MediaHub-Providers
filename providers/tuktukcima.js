@@ -155,7 +155,7 @@
         // any embed-looking URL written in scripts / attributes
         (html.replace(/\\\//g, '/').match(/https?:\/\/[^"'\s<>\\]+/g) || []).forEach(function (u) {
           var h = host(u);
-          if (h && h !== h0 && !/google|gstatic|facebook|twitter|cloudflare|wp\.com|w3\.org|schema\.org|jquery|bootstrap|fontawesome|gravatar|youtube\.com\/(?!embed)/i.test(h)) hosts[h] = 1;
+          if (h && h !== h0 && !/google|gstatic|facebook|twitter|cloudflare|wp\.com|w3\.org|schema\.org|jquery|bootstrap|fontawesome|gravatar|youtube\.com\/(?!embed)/i.test(h)) { if (!hosts[h]) hosts[h] = u; }
           if (/(embed|player|stream|dood|voe|mixdrop|uqload|vidmoly|filemoon|streamwish|upstream|ok\.ru\/videoembed|vk\.com\/video_ext)/i.test(u) && !/\.(jpe?g|png|gif|webp|svg|css|js)(\?|$)/i.test(u)) addEmbed(u, tried[i]);
         });
         if (direct.length || embeds.length || posts.length) break;
@@ -181,8 +181,12 @@
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
         var txt;
-        try { txt = await MediaHub.getText(q.u); eReport.push(host(q.u) + ' ' + txt.length); }
-        catch (e) { eReport.push(host(q.u) + ' ' + (e && e.message)); continue; }
+        try { txt = await MediaHub.getText(q.u); }
+        catch (e1) {
+          try { txt = await MediaHub.getText(q.u, { referrerPolicy: 'no-referrer' }); }
+          catch (e2) { eReport.push(q.u.slice(0, 100) + ' -> ' + (e1 && e1.message)); continue; }
+        }
+        eReport.push(host(q.u) + ' ' + txt.length);
         var all = txt + unpackAll(txt) + decodeB64(txt);
         scan(all);
         all.replace(FILEKEY, function (m0, u) {
@@ -200,7 +204,7 @@
       if (!direct.length) {
         throw new Error('No direct video link. Servers: ' + (embeds.slice(0, 4).map(host).join(', ') || 'none') +
           ' | embed pages: ' + eReport.join('; ') + ' | pages: ' + report.join('; ') + ' | iframes ' + stats.iframe + ', buttons ' + stats.nume +
-          ' | other hosts: ' + Object.keys(hosts).slice(0, 5).join(', '));
+          ' | urls: ' + Object.keys(hosts).slice(0, 4).map(function (h) { return hosts[h].slice(0, 80); }).join(' ; '));
       }
       return direct.map(function (u, n) { return { url: u, label: 'Server ' + (n + 1), referer: page }; });
     }

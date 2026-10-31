@@ -15,7 +15,7 @@
       "name": "Tuktukcima",
       "id": "tuktukcima",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/tuktukcima.js",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "language": "ar",
       "types": ["Movie", "TvSeries"]
     }

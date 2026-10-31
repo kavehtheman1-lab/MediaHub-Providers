@@ -284,46 +284,41 @@
           if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) { if (direct.indexOf(u) < 0) direct.push(u); }
           else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
         });
+        var mh = q.u.match(/^(https?:\/\/[^\/]+)\/iframe\/([A-Za-z0-9]+)/);
+        if (mh && !crawled.sib) {
+          crawled.sib = 1;
+          ['mirror', 'download'].forEach(function (seg) { queue.push({ u: mh[1] + '/' + seg + '/' + mh[2], d: q.d + 1, ref: q.u }); });
+        }
         if (!direct.length && q.d >= 1) {
-          var pd = pageData(txt);
+          var pd = pageData(txt), tag = q.u.split('/').slice(3, 4).join('');
           if (pd && pd.props) {
             var lv = leaves(pd.props, '', [], 0);
+            lv.forEach(function (l) { if (/^https?:\/\/[^\s]+\.(m3u8|mp4|mkv|webm)(\?|$)/i.test(l.v) && direct.indexOf(l.v) < 0) direct.push(l.v); });
             var get = function (names) {
               for (var a1 = 0; a1 < names.length; a1++) for (var b1 = 0; b1 < lv.length; b1++) if (lv[b1].k === names[a1] && lv[b1].v) return lv[b1].v;
               return '';
             };
-            var doms = [get(['domain', 'host', 'hostname', 'cdn', 'server', 'mirror_domain'])].concat([host(q.u)], Object.keys(hosts).filter(function (h) { return /cvt|cdn|hls|stream|mega/i.test(h); }));
-            var accs = [get(['account', 'account_id', 'accountId', 'user_id', 'userId'])];
-            var mirs = [get(['mirror', 'mirror_id', 'mirrorId', 'mirror_name', 'server_id', 'server'])];
-            var pths = [get(['path', 'hash', 'file', 'filename', 'key']), get(['hashId', 'hash_id', 'id'])];
-            var tries = 0, seenU = {};
-            doms.forEach(function () {});
-            for (var d1 = 0; d1 < doms.length && !direct.length && tries < 8; d1++)
-              for (var p1 = 0; p1 < pths.length && !direct.length && tries < 8; p1++) {
-                if (!doms[d1] || !accs[0] || !mirs[0] || !pths[p1]) continue;
-                var hu = 'https://' + doms[d1] + '/hls/' + accs[0] + '/' + mirs[0] + '/' + pths[p1] + '/master.m3u8';
-                if (seenU[hu]) continue; seenU[hu] = 1; tries++;
-                try { var ht = await MediaHub.getText(hu, { referer: q.u }); eReport.push('hls ' + doms[d1] + ' ' + clean(ht.slice(0, 20))); if (/^#EXTM3U/.test(ht)) direct.push(hu); }
-                catch (e) { eReport.push('hls ' + doms[d1] + ' ' + (e && e.message)); }
-              }
             if (!direct.length) {
-              var rest = {};
-              Object.keys(pd.props).forEach(function (k) { if (k !== 'config' && k !== 'errors') rest[k] = pd.props[k]; });
-              eReport.push('props: ' + Object.keys(pd.props).join(','));
-              eReport.push('data: ' + keyPaths(rest, '', 0, []).filter(function (x) { return !/_at=/.test(x); }).join(', ').slice(0, 450));
-              var hit = leaves(pd, '', [], 0).filter(function (l) { return /account|mirror|domain|path|host|hls|stream|url|src/i.test(l.k); }).slice(0, 8);
-              if (hit.length) eReport.push('keys: ' + hit.map(function (l) { return l.k + '=' + l.v.slice(0, 40); }).join(', '));
-              var sm = txt.match(/<script[^>]+src=["']([^"']*(?:assets|chunks)[^"']*\.js)["']/i);
-              if (sm && !crawled.js) {
-                crawled.js = 1;
+              var dom = get(['domain', 'host', 'hostname', 'server']), acc = get(['account', 'account_id', 'accountId']),
+                  mir = get(['mirror', 'mirror_id', 'mirrorId']), pth = get(['path', 'hls', 'hls_path']),
+                  sto = get(['storage']), att = get(['attachment', 'attachment_id']), nm = get(['name', 'filename', 'file_name']);
+              var cands = [];
+              if (dom && acc && mir && pth) cands.push({ u: 'https://' + dom + '/hls/' + acc + '/' + mir + '/' + pth + '/master.m3u8', hls: true });
+              if (dom && sto && att && mir && nm) cands.push({ u: 'https://' + dom + '/' + sto + '/' + att + '/' + mir + '/' + encodeURIComponent(nm), hls: false });
+              for (var ci = 0; ci < cands.length && !direct.length; ci++) {
                 try {
-                  var jt = await MediaHub.getText(abs(sm[1], q.u), { referer: q.u }), rt = [], rr = /["']?([\w.\-]+)["']?\s*:\s*\{\s*uri\s*:\s*[`"']([^`"']+)[`"']/g, rm;
-                  while ((rm = rr.exec(jt)) && rt.length < 80) if (/video|stream|source|mirror|hls|player|file|download|embed/i.test(rm[1] + rm[2])) rt.push(rm[1] + '=' + rm[2].slice(0, 60));
-                  eReport.push('routes: ' + rt.slice(0, 14).join(' , '));
-                } catch (e) { eReport.push('js ' + (e && e.message)); }
+                  var ct = await MediaHub.getText(cands[ci].u, { referer: q.u, method: cands[ci].hls ? 'GET' : 'HEAD' });
+                  eReport.push('try ' + host(cands[ci].u) + ' ok');
+                  if (!cands[ci].hls || /^#EXTM3U/.test(ct)) direct.push(cands[ci].u);
+                } catch (e) { eReport.push('try ' + host(cands[ci].u) + ' ' + (e && e.message)); }
               }
             }
-          } else eReport.push('no page data');
+            if (!direct.length) {
+              var rest = {};
+              Object.keys(pd.props).forEach(function (k) { if (k !== 'config' && k !== 'errors' && k !== 'ads') rest[k] = pd.props[k]; });
+              eReport.push('[' + tag + '] ' + (pd.component || '') + ': ' + keyPaths(rest, '', 0, []).filter(function (x) { return !/_at=/.test(x); }).join(', ').slice(0, 420));
+            }
+          } else eReport.push('[' + tag + '] no page data');
         }
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {

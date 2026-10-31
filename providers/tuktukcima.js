@@ -89,6 +89,26 @@
   var FILEKEY = /(?:file|src|source|hls|stream|video_url|url)["']?\s*[:=]\s*["'](https?:\\?\/\\?\/[^"'\s<>]+)/gi;
   var NOTMEDIA = /\.(jpe?g|png|gif|webp|svg|css|js|ico|vtt|srt|json|woff2?|ttf)(\?|$)/i;
 
+
+  // Embed links end with a token = reversed base64 of the real player URL (with some junk around it).
+  function decodeToken(u) {
+    try {
+      var seg = String(u).split('?')[0].replace(/\/+$/, '').split('/').pop();
+      if (!seg || seg.length < 24) return '';
+      var r = seg.split('').reverse().join(''), i = r.search(/aHR0c(Dov|HM6)/);
+      if (i < 0) return '';
+      var b = (r.slice(i).match(/^[A-Za-z0-9+\/_-]*/) || [''])[0].replace(/-/g, '+').replace(/_/g, '/');
+      b = b.slice(0, b.length - (b.length % 4));
+      for (; b.length >= 16; b = b.slice(0, -4)) {
+        try {
+          var m = atob(b).match(/^https?:\/\/[\x21-\x7e]+/);
+          if (m) return m[0];
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return '';
+  }
+
   MediaHub.registerProvider({
     id: 'tuktukcima',
     name: 'Tuktukcima',
@@ -181,6 +201,15 @@
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
+        if (!q.nodec) {
+          var dec = decodeToken(q.u);
+          if (dec && !seenQ[dec]) {
+            eReport.push('decoded ' + dec.slice(0, 160));
+            queue.unshift({ u: dec, d: q.d + 1, ref: q.u });
+            queue.push({ u: q.u, d: q.d, ref: q.ref, nodec: true });
+            seenQ[q.u] = 0; fetched--; continue;
+          }
+        }
         var txt;
         try { txt = await MediaHub.getText(q.u, { referer: q.ref }); }
         catch (e1) {

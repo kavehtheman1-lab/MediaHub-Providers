@@ -98,15 +98,39 @@
       var r = seg.split('').reverse().join(''), i = r.search(/aHR0c(Dov|HM6)/);
       if (i < 0) return '';
       var b = (r.slice(i).match(/^[A-Za-z0-9+\/_-]*/) || [''])[0].replace(/-/g, '+').replace(/_/g, '/');
-      b = b.slice(0, b.length - (b.length % 4));
-      for (; b.length >= 16; b = b.slice(0, -4)) {
+      for (; b.length >= 16; b = b.slice(0, -1)) {
+        if (b.length % 4 === 1) continue;
         try {
-          var m = atob(b).match(/^https?:\/\/[\x21-\x7e]+/);
+          var m = atob(b + '==='.slice(0, (4 - b.length % 4) % 4)).match(/^https?:\/\/[\x21-\x7e]+/);
           if (m) return m[0];
         } catch (e) {}
       }
     } catch (e) {}
     return '';
+  }
+
+
+  // Strings in player scripts that hide a URL (plain or reversed base64).
+  function encodedUrls(text) {
+    var out = [], re = /["'`]([A-Za-z0-9+\/_=-]{32,})["'`]/g, m;
+    while ((m = re.exec(text)) && out.length < 12) {
+      var str = m[1], u = decodeToken('x/' + str);
+      if (!u && /^aHR0c/.test(str)) {
+        try { var d = atob(str.replace(/-/g, '+').replace(/_/g, '/')), mm = d.match(/^https?:\/\/[\x21-\x7e]+/); u = mm ? mm[0] : ''; } catch (e) {}
+      }
+      if (u && out.indexOf(u) < 0) out.push(u);
+    }
+    return out;
+  }
+  // Short look at how a player page loads its video (shown in the error to guide the next fix).
+  function peek(txt) {
+    var out = [], re = /(m3u8|\.mp4|sources?\s*[:=]|file\s*[:=]|fetch\(|\$\.ajax|\$\.post|XMLHttpRequest|\/api\/|eval\()/ig, m, last = -999;
+    while ((m = re.exec(txt)) && out.length < 3) {
+      if (m.index - last < 200) continue; last = m.index;
+      out.push(clean(txt.slice(Math.max(0, m.index - 30), m.index + 100)));
+    }
+    var js = (txt.match(/<script[^>]+src=["'][^"']+/gi) || []).slice(0, 3).map(function (x) { return x.replace(/^.*src=["']/i, '').slice(-45); });
+    return 'peek: ' + (out.join(' // ') || 'no keywords') + (js.length ? ' | js: ' + js.join(', ') : '');
   }
 
   MediaHub.registerProvider({
@@ -224,6 +248,11 @@
           if (!NOTMEDIA.test(u) && direct.indexOf(u) < 0 && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) direct.push(u);
           return m0;
         });
+        encodedUrls(all).forEach(function (u) {
+          if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) { if (direct.indexOf(u) < 0) direct.push(u); }
+          else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
+        });
+        if (!direct.length && q.d >= 1) eReport.push(peek(txt));
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {
             var u2 = abs(n.getAttribute('src') || n.getAttribute('data-src'), q.u);
@@ -232,9 +261,7 @@
         }
       }
       if (!direct.length) {
-        throw new Error('No direct video link. Servers: ' + (embeds.slice(0, 4).map(host).join(', ') || 'none') +
-          ' | embed pages: ' + eReport.join('; ') + ' | pages: ' + report.join('; ') + ' | iframes ' + stats.iframe + ', buttons ' + stats.nume +
-          ' | urls: ' + Object.keys(hosts).slice(0, 4).map(function (h) { return hosts[h].slice(0, 80); }).join(' ; '));
+        throw new Error('No video link. ' + eReport.join(' ; ') + ' | page ' + report.join('; '));
       }
       return direct.map(function (u, n) { return { url: u, label: 'Server ' + (n + 1), referer: page }; });
     }

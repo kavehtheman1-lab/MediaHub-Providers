@@ -133,6 +133,29 @@
     return 'peek: ' + (out.join(' // ') || 'no keywords') + (js.length ? ' | js: ' + js.join(', ') : '');
   }
 
+
+  function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
+  // Inertia/Vue style pages keep their data in a data-page="{...}" attribute.
+  function pageData(txt) {
+    var m = String(txt).match(/data-page=(["'])([\s\S]*?)\1\s*[>\s]/);
+    if (!m) return null;
+    try { return JSON.parse(unent(m[2])); } catch (e) { return null; }
+  }
+  function keyPaths(o, pre, depth, out) {
+    if (!o || typeof o !== 'object' || depth > 3 || out.length > 30) return out;
+    Object.keys(o).slice(0, 12).forEach(function (k) {
+      var v = o[k], pth = pre ? pre + '.' + k : k;
+      if (v && typeof v === 'object') keyPaths(v, pth, depth + 1, out);
+      else out.push(pth + (typeof v === 'string' ? '=' + v.slice(0, 18) : ''));
+    });
+    return out;
+  }
+  function apiHints(js) {
+    var out = [], seen = {}, re = /["'`]((?:\/?api\/|\/?stream|\/?video|\/?source|\/?player|\/?hls|\/?playlist|\/?embed)[^"'`\s]{0,50})["'`]/gi, m;
+    while ((m = re.exec(js)) && out.length < 8) { if (!seen[m[1]]) { seen[m[1]] = 1; out.push(m[1]); } }
+    return out;
+  }
+
   MediaHub.registerProvider({
     id: 'tuktukcima',
     name: 'Tuktukcima',
@@ -221,6 +244,7 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
+      var crawled = {};
       var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
@@ -241,7 +265,7 @@
           catch (e2) { eReport.push(q.u.slice(0, 300) + ' -> ' + (e1 && e1.message)); continue; }
         }
         eReport.push(host(q.u) + ' ' + txt.length);
-        var all = txt + unpackAll(txt) + decodeB64(txt);
+        var txt2 = unent(txt), all = txt2 + unpackAll(txt2) + decodeB64(txt2);
         scan(all);
         all.replace(FILEKEY, function (m0, u) {
           u = u.replace(/\\\//g, '/');
@@ -252,7 +276,16 @@
           if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) { if (direct.indexOf(u) < 0) direct.push(u); }
           else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
         });
-        if (!direct.length && q.d >= 1) eReport.push(peek(txt));
+        if (!direct.length && q.d >= 1) {
+          eReport.push(peek(txt2));
+          var pd = pageData(txt);
+          if (pd) eReport.push('data: ' + keyPaths(pd.props || pd, '', 0, []).join(', ').slice(0, 320));
+          var sm = txt.match(/<script[^>]+src=["']([^"']*(?:assets|chunks)[^"']*\.js)["']/i);
+          if (sm && !crawled.js) {
+            crawled.js = 1;
+            try { eReport.push('api: ' + apiHints(await MediaHub.getText(abs(sm[1], q.u), { referer: q.u })).join(' , ')); } catch (e) { eReport.push('api: js ' + (e && e.message)); }
+          }
+        }
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {
             var u2 = abs(n.getAttribute('src') || n.getAttribute('data-src'), q.u);

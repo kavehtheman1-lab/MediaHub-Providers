@@ -185,7 +185,7 @@
         try { txt = await MediaHub.getText(q.u, { referer: q.ref }); }
         catch (e1) {
           try { txt = await MediaHub.getText(q.u, { referrerPolicy: 'no-referrer' }); }
-          catch (e2) { eReport.push(q.u.slice(0, 100) + ' -> ' + (e1 && e1.message)); continue; }
+          catch (e2) { eReport.push(q.u.slice(0, 300) + ' -> ' + (e1 && e1.message)); continue; }
         }
         eReport.push(host(q.u) + ' ' + txt.length);
         var all = txt + unpackAll(txt) + decodeB64(txt);

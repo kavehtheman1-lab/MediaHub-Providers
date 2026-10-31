@@ -137,16 +137,24 @@
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   // Inertia/Vue style pages keep their data in a data-page="{...}" attribute.
   function pageData(txt) {
-    var m = String(txt).match(/data-page=(["'])([\s\S]*?)\1\s*[>\s]/);
-    if (!m) return null;
-    try { return JSON.parse(unent(m[2])); } catch (e) { return null; }
+    var m = String(txt).match(/<script[^>]*data-page[^>]*>([\s\S]*?)<\/script>/i);
+    if (m) { try { return JSON.parse(m[1]); } catch (e) {} }
+    m = String(txt).match(/data-page=(["'])([\s\S]*?)\1\s*[>\s]/);
+    if (m) { try { return JSON.parse(unent(m[2])); } catch (e) {} }
+    return null;
+  }
+  function leaves(o, pre, out, depth) {
+    if (depth > 5 || out.length > 200) return out;
+    if (o && typeof o === 'object') Object.keys(o).forEach(function (k) { leaves(o[k], k, out, depth + 1); });
+    else if (o !== null && o !== undefined) out.push({ k: pre, v: String(o) });
+    return out;
   }
   function keyPaths(o, pre, depth, out) {
-    if (!o || typeof o !== 'object' || depth > 3 || out.length > 30) return out;
-    Object.keys(o).slice(0, 12).forEach(function (k) {
+    if (!o || typeof o !== 'object' || depth > 4 || out.length > 40) return out;
+    Object.keys(o).slice(0, 14).forEach(function (k) {
       var v = o[k], pth = pre ? pre + '.' + k : k;
       if (v && typeof v === 'object') keyPaths(v, pth, depth + 1, out);
-      else out.push(pth + (typeof v === 'string' ? '=' + v.slice(0, 18) : ''));
+      else out.push(pth + '=' + String(v).slice(0, 26));
     });
     return out;
   }
@@ -277,37 +285,29 @@
           else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
         });
         if (!direct.length && q.d >= 1) {
-          var pick = function (key) { var mm = txt2.match(new RegExp('["\']?' + key + '["\']?\\s*[:=]\\s*["\']([^"\']{1,90})["\']', 'i')); return mm ? mm[1] : ''; };
-          var acc = pick('account'), mir = pick('mirror'), pth = pick('path').replace(/^\/+|\/+$/g, '');
-          if (acc && mir && pth) {
-            var cand = [host(q.u)].concat(Object.keys(hosts).filter(function (h) { return /cvt|cdn|hls|stream|mega/i.test(h); }));
-            if (/^[\w.-]+\.[a-z]{2,}$/i.test(mir)) cand.push(mir);
-            for (var ci = 0; ci < cand.length && !direct.length; ci++) {
-              var hu = 'https://' + cand[ci] + '/hls/' + acc + '/' + mir + '/' + pth + '/master.m3u8';
-              try { var ht = await MediaHub.getText(hu, { referer: q.u }); eReport.push('hls ' + cand[ci] + ' ' + ht.slice(0, 7)); if (/^#EXTM3U/.test(ht)) direct.push(hu); }
-              catch (e) { eReport.push('hls ' + cand[ci] + ' ' + (e && e.message)); }
-            }
-          }
-        }
-        if (!direct.length && q.d >= 1) {
-          eReport.push(peek(txt2));
           var pd = pageData(txt);
-          if (pd) eReport.push('data: ' + keyPaths(pd.props || pd, '', 0, []).join(', ').slice(0, 320));
-          var sm = txt.match(/<script[^>]+src=["']([^"']*(?:assets|chunks)[^"']*\.js)["']/i);
-          if (sm && !crawled.js) {
-            crawled.js = 1;
-            var jt = '';
-            try { jt = await MediaHub.getText(abs(sm[1], q.u), { referer: q.u }); } catch (e) { eReport.push('js ' + (e && e.message)); }
-            if (jt) {
-              eReport.push('api: ' + apiHints(jt).join(' , '));
-              var km = jt.indexOf('master.m3u8');
-              if (km >= 0) eReport.push('m3u8@ ' + clean(jt.slice(Math.max(0, km - 170), km + 20)));
-              var ka = jt.search(/account/);
-              if (ka >= 0) eReport.push('acct@ ' + clean(jt.slice(Math.max(0, ka - 80), ka + 90)));
-            }
-          }
-          var ha = txt2.search(/account|mirror/i);
-          if (ha >= 0) eReport.push('html@ ' + clean(txt2.slice(Math.max(0, ha - 50), ha + 170)));
+          if (pd && pd.props) {
+            var lv = leaves(pd.props, '', [], 0);
+            var get = function (names) {
+              for (var a1 = 0; a1 < names.length; a1++) for (var b1 = 0; b1 < lv.length; b1++) if (lv[b1].k === names[a1] && lv[b1].v) return lv[b1].v;
+              return '';
+            };
+            var doms = [get(['domain', 'host', 'hostname', 'cdn', 'server', 'mirror_domain'])].concat([host(q.u)], Object.keys(hosts).filter(function (h) { return /cvt|cdn|hls|stream|mega/i.test(h); }));
+            var accs = [get(['account', 'account_id', 'accountId', 'user_id', 'userId'])];
+            var mirs = [get(['mirror', 'mirror_id', 'mirrorId', 'mirror_name', 'server_id', 'server'])];
+            var pths = [get(['path', 'hash', 'file', 'filename', 'key']), get(['hashId', 'hash_id', 'id'])];
+            var tries = 0, seenU = {};
+            doms.forEach(function () {});
+            for (var d1 = 0; d1 < doms.length && !direct.length && tries < 8; d1++)
+              for (var p1 = 0; p1 < pths.length && !direct.length && tries < 8; p1++) {
+                if (!doms[d1] || !accs[0] || !mirs[0] || !pths[p1]) continue;
+                var hu = 'https://' + doms[d1] + '/hls/' + accs[0] + '/' + mirs[0] + '/' + pths[p1] + '/master.m3u8';
+                if (seenU[hu]) continue; seenU[hu] = 1; tries++;
+                try { var ht = await MediaHub.getText(hu, { referer: q.u }); eReport.push('hls ' + doms[d1] + ' ' + clean(ht.slice(0, 20))); if (/^#EXTM3U/.test(ht)) direct.push(hu); }
+                catch (e) { eReport.push('hls ' + doms[d1] + ' ' + (e && e.message)); }
+              }
+            if (!direct.length) eReport.push('data: ' + keyPaths(pd.props, '', 0, []).join(', ').slice(0, 700));
+          } else eReport.push('no page data');
         }
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {

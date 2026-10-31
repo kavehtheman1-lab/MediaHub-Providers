@@ -252,11 +252,13 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
-      var crawled = {};
+      var crawled = {}, labels = {}, labelFor = {}, lastN = 0, lastLabel = '';
+      function flushLabels() { for (; lastN < direct.length; lastN++) labels[direct[lastN]] = lastLabel; }
       var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
+        flushLabels(); lastLabel = labelFor[q.u] || '';
         if (!q.nodec) {
           var dec = decodeToken(q.u);
           if (dec && !seenQ[dec]) {
@@ -304,6 +306,17 @@
                 'X-Inertia-Partial-Data': dn.join(','), 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html, application/xhtml+xml' } });
               var fresh = [];
               if (dj && dj.props) Object.keys(dj.props).forEach(function (k) { if (!(k in pd.props)) fresh.push(k); pd.props[k] = dj.props[k]; });
+              var sdata = (dj && dj.props && dj.props.streams && dj.props.streams.data) || [];
+              sdata.forEach(function (it) {
+                (it.mirrors || []).forEach(function (m) {
+                  var l3 = String(m.link || '');
+                  if (!/^(https?:)?\/\//.test(l3)) return;
+                  var u3 = l3.indexOf('//') === 0 ? 'https:' + l3 : l3;
+                  if (seenQ[u3]) return;
+                  labelFor[u3] = ((m.symbol || m.driver || 'Server') + ' ' + (String(it.label || '').split(' ')[0])).trim();
+                  queue.push({ u: u3, d: q.d + 1, ref: q.u });
+                });
+              });
               eReport.push('[' + tag + '] partial new props: ' + (fresh.join(',') || 'none'));
             } catch (e) { eReport.push('[' + tag + '] partial ' + (e && e.message)); }
           }
@@ -353,10 +366,11 @@
           });
         }
       }
+      flushLabels();
       if (!direct.length) {
         throw new Error('No video link. ' + eReport.join(' ; ') + ' | page ' + report.join('; '));
       }
-      return direct.map(function (u, n) { return { url: u, label: 'Server ' + (n + 1), referer: page }; });
+      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: page }; });
     }
   });
 })();

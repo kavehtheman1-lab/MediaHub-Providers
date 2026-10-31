@@ -119,7 +119,8 @@
         if (!href || href === url || seen[href] || host(href) !== h0) return;
         var dec = ''; try { dec = decodeURIComponent(href); } catch (e) { dec = href; }
         if (/episode|الحلقة|حلقة/i.test(dec) || /^(الحلقة|حلقة|episode)\s*\d+/i.test(t)) {
-          seen[href] = 1; eps.push({ id: href, url: href, title: t || 'Episode ' + (eps.length + 1) });
+          seen[href] = 1; var sm = (dec + ' ' + t).match(/(?:الموسم|موسم|season|\bs)[\s\-_]*0*(\d+)/i);
+          eps.push({ id: href, url: href, title: t || 'Episode ' + (eps.length + 1), season: sm ? sm[1] : undefined });
         }
       });
       return { title: title, poster: item.poster || meta('og:image'), desc: clean(meta('og:description') || meta('description')), episodes: eps };
@@ -176,12 +177,12 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
-      var queue = embeds.map(function (u) { return { u: u, d: 0 }; }), seenQ = {}, fetched = 0, eReport = [];
+      var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
         var txt;
-        try { txt = await MediaHub.getText(q.u); }
+        try { txt = await MediaHub.getText(q.u, { referer: q.ref }); }
         catch (e1) {
           try { txt = await MediaHub.getText(q.u, { referrerPolicy: 'no-referrer' }); }
           catch (e2) { eReport.push(q.u.slice(0, 100) + ' -> ' + (e1 && e1.message)); continue; }
@@ -197,7 +198,7 @@
         if (!direct.length && q.d < 2) {
           [].forEach.call(parse(txt).querySelectorAll('iframe[src],iframe[data-src]'), function (n) {
             var u2 = abs(n.getAttribute('src') || n.getAttribute('data-src'), q.u);
-            if (/^https?:/i.test(u2) && !/youtube|youtu\.be/i.test(u2)) queue.push({ u: u2, d: q.d + 1 });
+            if (/^https?:/i.test(u2) && !/youtube|youtu\.be/i.test(u2)) queue.push({ u: u2, d: q.d + 1, ref: q.u });
           });
         }
       }

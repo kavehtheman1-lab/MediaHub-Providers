@@ -306,7 +306,23 @@
                 try { var ht = await MediaHub.getText(hu, { referer: q.u }); eReport.push('hls ' + doms[d1] + ' ' + clean(ht.slice(0, 20))); if (/^#EXTM3U/.test(ht)) direct.push(hu); }
                 catch (e) { eReport.push('hls ' + doms[d1] + ' ' + (e && e.message)); }
               }
-            if (!direct.length) eReport.push('data: ' + keyPaths(pd.props, '', 0, []).join(', ').slice(0, 700));
+            if (!direct.length) {
+              var rest = {};
+              Object.keys(pd.props).forEach(function (k) { if (k !== 'config' && k !== 'errors') rest[k] = pd.props[k]; });
+              eReport.push('props: ' + Object.keys(pd.props).join(','));
+              eReport.push('data: ' + keyPaths(rest, '', 0, []).filter(function (x) { return !/_at=/.test(x); }).join(', ').slice(0, 450));
+              var hit = leaves(pd, '', [], 0).filter(function (l) { return /account|mirror|domain|path|host|hls|stream|url|src/i.test(l.k); }).slice(0, 8);
+              if (hit.length) eReport.push('keys: ' + hit.map(function (l) { return l.k + '=' + l.v.slice(0, 40); }).join(', '));
+              var sm = txt.match(/<script[^>]+src=["']([^"']*(?:assets|chunks)[^"']*\.js)["']/i);
+              if (sm && !crawled.js) {
+                crawled.js = 1;
+                try {
+                  var jt = await MediaHub.getText(abs(sm[1], q.u), { referer: q.u }), rt = [], rr = /["']?([\w.\-]+)["']?\s*:\s*\{\s*uri\s*:\s*[`"']([^`"']+)[`"']/g, rm;
+                  while ((rm = rr.exec(jt)) && rt.length < 80) if (/video|stream|source|mirror|hls|player|file|download|embed/i.test(rm[1] + rm[2])) rt.push(rm[1] + '=' + rm[2].slice(0, 60));
+                  eReport.push('routes: ' + rt.slice(0, 14).join(' , '));
+                } catch (e) { eReport.push('js ' + (e && e.message)); }
+              }
+            }
           } else eReport.push('no page data');
         }
         if (!direct.length && q.d < 2) {

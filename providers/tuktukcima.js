@@ -236,24 +236,31 @@
     if (any) [].forEach.call(d.querySelectorAll('a[href]'), function (a) { push(a.getAttribute('href'), a.textContent); });
     return out.sort(function (a, b) { return +a.k - +b.k; });
   }
-  // "Genre: ..., Year: ..., Cast: ..." style rows
-  function metaRows(d) {
-    var out = [], lab = 'التصنيف|النوع|الانتاج|الإنتاج|موعد الصدور|سنة|بلد|الدولة|دولة|اللغة|لغة|المدة|مدة|التقييم|تقييم|جودة|العمر|المؤلفين|المؤلف|بطولة|الممثلين|المخرج|اخراج|إخراج|genres?|year|country|language|duration|runtime|rating|quality|age|cast|director|writers?';
-    var re = new RegExp('^(?:' + lab + ')', 'i'), reAll = new RegExp('(?:^|\\s)(?:' + lab + ')\\s*[:：]', 'ig');
+  // category chips (e.g. drama)
+  function genresOf(d) {
     var genres = [];
     [].forEach.call(d.querySelectorAll('a[href*="/genre/"],a[href*="/genres/"],a[href*="/category/"],a[href*="/cat/"]'), function (a) {
       var t = clean(a.textContent); if (t && t.length < 30 && genres.indexOf(t) < 0 && !/^(الرئيسية|home)$/i.test(t)) genres.push(t);
     });
-    if (genres.length) out.push('التصنيف: ' + genres.slice(0, 6).join('، '));
+    return genres.slice(0, 8);
+  }
+  // "Label: value" rows -> [{k, v}]
+  function metaRows(d) {
+    var out = [], seenK = {}, lab = 'موعد الصدور|التصنيف|النوع|الانتاج|الإنتاج|سنة الإنتاج|سنة|بلد|الدولة|دولة المسلسل|دولة الفيلم|دولة|اللغة|لغة المسلسل|لغة الفيلم|لغة|المدة|مدة|التقييم|تقييم|جودة المسلسل|جودة الفيلم|جودة|العمر|المؤلفين|المؤلف|بطولة|الممثلين|المخرج|اخراج|إخراج|genres?|year|country|language|duration|runtime|rating|quality|age|cast|director|writers?';
+    var re = new RegExp('^(?:' + lab + ')', 'i'), reAll = new RegExp('(?:^|\\s)(?:' + lab + ')\\s*[:：]', 'ig'), done = [];
     [].forEach.call(d.querySelectorAll('li,div,p,span'), function (n) {
       var t = clean(n.textContent);
-      if (t.length < 6 || t.length > 200 || !re.test(t)) return;
+      if (t.length < 6 || t.length > 220 || !re.test(t)) return;
       var hits = t.match(reAll); if (!hits || hits.length !== 1) return;          // one label per row
-      if (t.replace(re, '').replace(/[:：\s\-]/g, '').length < 2) return;
-      for (var i = 0; i < out.length; i++) if (out[i].indexOf(t) >= 0 || t.indexOf(out[i]) >= 0) return;
-      out.push(t);
+      var m = t.match(re), k = m[0].trim(), v = t.slice(m[0].length).replace(/^[\s:：\-]+/, '').trim();
+      if (v.length < 1 || seenK[k]) return;
+      seenK[k] = 1; out.push({ k: k, v: v });
     });
-    return out.slice(0, 9);
+    return out.slice(0, 10);
+  }
+  // "مسلسل Grey's Anatomy الموسم 23 الحلقة 3" -> "Grey's Anatomy"
+  function cleanSeries(t) {
+    return clean(String(t).replace(/^\s*(?:مسلسل|فيلم|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:الموسم|موسم|season)\s*[\d\u0660-\u0669]+.*$/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*مترجم[ةه]?\s*$/i, ''));
   }
   function searchCards(html, base) { var out = []; cards(parse(html), base).forEach(function (x) { out = out.concat(x.items); }); return out; }
 
@@ -354,7 +361,9 @@
         var m = String(e.title).match(/^الحلقة (\d+)$/); if (!m) return true;
         var key = e.season + '-' + m[1]; if (seenN[key]) return false; seenN[key] = 1; return true;
       });
-      return { title: item.title || pageTitle, poster: poster, desc: desc, meta: rows, episodes: list, seasons: seasons.length > 1 ? seasons : undefined, currentSeason: cur };
+      var genres = genresOf(doc);
+      return { title: item.title || pageTitle, series: (isEp || list.length) ? (cleanSeries(pageTitle || item.title) || undefined) : undefined,
+        poster: poster, desc: desc, genres: genres, meta: rows, episodes: list, seasons: seasons.length > 1 ? seasons : undefined, currentSeason: cur };
     },
 
     // episodes of another season (loaded when the user picks it)

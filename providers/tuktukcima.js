@@ -252,13 +252,13 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
-      var crawled = {}, labels = {}, labelFor = {}, lastN = 0, lastLabel = '';
-      function flushLabels() { for (; lastN < direct.length; lastN++) labels[direct[lastN]] = lastLabel; }
+      var crawled = {}, labels = {}, refs = {}, labelFor = {}, lastN = 0, lastLabel = '', lastRef = page;
+      function flushLabels() { for (; lastN < direct.length; lastN++) { labels[direct[lastN]] = lastLabel; refs[direct[lastN]] = lastRef; } }
       var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
-        flushLabels(); lastLabel = labelFor[q.u] || '';
+        flushLabels(); lastLabel = labelFor[q.u] || ''; lastRef = q.u;
         if (!q.nodec) {
           var dec = decodeToken(q.u);
           if (dec && !seenQ[dec]) {
@@ -370,7 +370,7 @@
       if (!direct.length) {
         throw new Error('No video link. ' + eReport.join(' ; ') + ' | page ' + report.join('; '));
       }
-      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: page }; });
+      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: refs[u] || page, relay: true }; });
     }
   });
 })();

@@ -52,6 +52,16 @@
   }
 
   // Cards grouped under the heading that precedes them.
+  // a link counts as a title card when it (or a small wrapper around it) holds a picture
+  function hasPic(n) {
+    if (n.querySelector('img')) return true;
+    var p = n.parentElement, i = 0;
+    while (p && i < 3) {
+      if (p.querySelectorAll('a[href]').length <= 4 && p.querySelector('img') && clean(n.textContent).length > 1) return true;
+      p = p.parentElement; i++;
+    }
+    return false;
+  }
   function cards(doc, base) {
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
@@ -65,7 +75,7 @@
       }
       var href = abs(n.getAttribute('href'), base);
       if (!href || host(href) !== h0 || SKIP.test(href) || href.charAt(href.length - 1) === '#') return;
-      if (!n.querySelector('img') && !(n.parentElement && n.parentElement.querySelector('img') && n.parentElement.querySelector('h1,h2,h3,h4,h5'))) return;
+      if (!hasPic(n)) return;
       var title = titleOf(n);
       if (!title || title.length > 140 || seen[href]) return;
       seen[href] = 1;
@@ -262,6 +272,19 @@
   function cleanSeries(t) {
     return clean(String(t).replace(/^\s*(?:مسلسل|فيلم|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:الموسم|موسم|season)\s*[\d\u0660-\u0669]+.*$/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*مترجم[ةه]?\s*$/i, ''));
   }
+  // quick health check of a stream address, as the TV itself would open it
+  async function verifyLink(u) {
+    try {
+      var t = await MediaHub.getText(u, { direct: true });
+      if (t.indexOf('#EXTM3U') !== 0) return !/\.m3u8/i.test(u);
+      function firstUri(txt) { return (txt.split(/\r?\n/).filter(function (x) { return x && x.charAt(0) !== '#'; })[0]) || ''; }
+      var first = firstUri(t); if (!first) return false;
+      var nu = abs(first, u);
+      if (/\.m3u8/i.test(nu)) { t = await MediaHub.getText(nu, { direct: true }); first = firstUri(t); if (!first) return false; nu = abs(first, nu); }
+      await MediaHub.getText(nu, { direct: true, headers: { Range: 'bytes=0-1023' } });
+      return true;
+    } catch (e) { return false; }
+  }
   function searchCards(html, base) { var out = []; cards(parse(html), base).forEach(function (x) { out = out.concat(x.items); }); return out; }
 
   MediaHub.registerProvider({
@@ -299,7 +322,22 @@
         if (tried.indexOf(urls[ui]) >= 0) continue; tried.push(urls[ui]);
         try {
           var html = await getHtml(urls[ui]), out = searchCards(html, base);
-          if (out.length) return out;
+          if (out.length) {
+            var seenS = {}, dS = parse(html), uS = urls[ui], h0S = host(base), more = 0;
+            out.forEach(function (x) { seenS[x.id] = 1; });
+            while (more++ < 3) {
+              var nxS = nextLink(dS, uS, h0S);
+              if (!nxS && urls[ui].indexOf('?s=') > 0) nxS = base + '/page/' + (more + 1) + '/?s=' + enc;   // WordPress style
+              if (!nxS || nxS === uS) break;
+              try {
+                var h2 = await getHtml(nxS), extra = searchCards(h2, base), added = 0;
+                extra.forEach(function (x) { if (!seenS[x.id]) { seenS[x.id] = 1; out.push(x); added++; } });
+                if (!added) break;
+                dS = parse(h2); uS = nxS;
+              } catch (e) { break; }
+            }
+            return out;
+          }
           last = 'no results at ' + urls[ui].replace(base, '');
         } catch (e) { last = (e && e.message) + ' ' + urls[ui].replace(base, '').slice(0, 30); }
       }
@@ -490,12 +528,12 @@
               if (dj && dj.props) Object.keys(dj.props).forEach(function (k) { if (!(k in pd.props)) fresh.push(k); pd.props[k] = dj.props[k]; });
               var sdata = (dj && dj.props && dj.props.streams && dj.props.streams.data) || [];
               sdata.forEach(function (it) {
-                (it.mirrors || []).forEach(function (m) {
+                (it.mirrors || []).slice().sort(function (a, b) { return (/vip/i.test((b.symbol || '') + (b.driver || '')) ? 1 : 0) - (/vip/i.test((a.symbol || '') + (a.driver || '')) ? 1 : 0); }).forEach(function (m) {
                   var l3 = String(m.link || '');
                   if (!/^(https?:)?\/\//.test(l3)) return;
                   var u3 = l3.indexOf('//') === 0 ? 'https:' + l3 : l3;
                   if (seenQ[u3]) return;
-                  labelFor[u3] = ((m.symbol || m.driver || 'Server') + ' ' + (String(it.label || '').split(' ')[0])).trim();
+                  labelFor[u3] = ((m.symbol || m.driver || 'Server') + (m.driver && m.symbol && m.driver !== m.symbol ? ' (' + m.driver + ')' : '') + ' ' + (String(it.label || '').split(' ')[0])).trim();
                   queue.push({ u: u3, d: q.d + 1, ref: q.u });
                 });
               });
@@ -549,10 +587,15 @@
         }
       }
       flushLabels();
+      if (direct.length > 1) {                 // test the ones the TV will open itself; keep the live ones
+        var oks = await Promise.all(direct.map(function (u) { return relays[u] ? Promise.resolve(true) : verifyLink(u); }));
+        var good = direct.filter(function (u, i) { return oks[i]; });
+        if (good.length) direct = good;
+      }
       if (!direct.length) {
         throw new Error('No video link. ' + eReport.join(' ; ') + ' | page ' + report.join('; '));
       }
-      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: refs[u] || page, relay: !!relays[u] }; });
+      return direct.map(function (u, n) { return { url: u, label: (labels[u] || ('Server ' + (n + 1))) + ' \u00B7 ' + host(u).split('.').slice(-2).join('.'), referer: refs[u] || page, relay: !!relays[u] }; });
     }
   });
 })();

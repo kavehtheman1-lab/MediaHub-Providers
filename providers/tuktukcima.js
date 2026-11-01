@@ -191,20 +191,72 @@
     },
 
     load: async function (cfg, item) {
-      var base = baseOf(cfg), url = item.url || item.id, html = await getHtml(url), doc = parse(html);
-      function meta(p) { var m = doc.querySelector('meta[property="' + p + '"],meta[name="' + p + '"]'); return m ? m.getAttribute('content') : ''; }
-      var h1 = doc.querySelector('h1'), title = clean(h1 && h1.textContent) || clean(meta('og:title')) || item.title;
-      var eps = [], seen = {}, h0 = host(base);
-      [].forEach.call(doc.querySelectorAll('a[href]'), function (a) {
-        var href = abs(a.getAttribute('href'), url), t = clean(a.textContent);
-        if (!href || href === url || seen[href] || host(href) !== h0) return;
-        var dec = ''; try { dec = decodeURIComponent(href); } catch (e) { dec = href; }
-        if (/episode|الحلقة|حلقة/i.test(dec) || /^(الحلقة|حلقة|episode)\s*\d+/i.test(t)) {
-          seen[href] = 1; var sm = (dec + ' ' + t).match(/(?:الموسم|موسم|season|\bs)[\s\-_]*0*(\d+)/i);
-          eps.push({ id: href, url: href, title: t || 'Episode ' + (eps.length + 1), season: sm ? sm[1] : undefined });
-        }
-      });
-      return { title: title, poster: item.poster || meta('og:image'), desc: clean(meta('og:description') || meta('description')), episodes: eps };
+      var base = baseOf(cfg), url = item.url || item.id, html = await getHtml(url), doc = parse(html), h0 = host(base);
+      function metaOf(d, pr) { var m = d.querySelector('meta[property="' + pr + '"],meta[name="' + pr + '"]'); return m ? m.getAttribute('content') : ''; }
+      function h1Of(d) { var h = d.querySelector('h1'); return clean(h && h.textContent) || clean(metaOf(d, 'og:title')); }
+      function dec(u) { try { return decodeURIComponent(u); } catch (e) { return u; } }
+      var ORD = { 'الاولى': 1, 'الأولى': 1, 'الثانية': 2, 'الثالثة': 3, 'الرابعة': 4, 'الخامسة': 5, 'السادسة': 6, 'السابعة': 7, 'الثامنة': 8, 'التاسعة': 9, 'العاشرة': 10 };
+      function epNum(t) {
+        var m = t.match(/(?:الحلقة|حلقة|episode|\bep)[\s\-_.:]*0*(\d+)/i); if (m) return +m[1];
+        for (var k in ORD) if (t.indexOf(k) >= 0) return ORD[k];
+        return 0;
+      }
+      function seasonOf(t) { var m = t.match(/(?:الموسم|موسم|season|\bs)[\s\-_]*0*(\d+)/i); return m ? m[1] : undefined; }
+      var eps = [], seen = {};
+      function add(href, t) {
+        if (!href || seen[href]) return;
+        seen[href] = 1; var d = dec(href);
+        eps.push({ id: href, url: href, title: t || 'Episode ' + (eps.length + 1), season: seasonOf(d + ' ' + t), n: epNum(d + ' ' + t) });
+      }
+      function grab(d, u) {
+        [].forEach.call(d.querySelectorAll('a[href]'), function (a) {
+          var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
+          if (!href || href === u || host(href) !== h0) return;
+          if (/episode|الحلقة|حلقة/i.test(dec(href)) || /^(الحلقة|حلقة|episode)\s*\d+/i.test(t)) add(href, t);
+        });
+      }
+      // link to the series page (breadcrumb / category), used when this page is only one episode
+      function parentLink(d, u) {
+        var best = '';
+        [].forEach.call(d.querySelectorAll('[class*="breadcrumb"] a[href],nav[aria-label*="read"] a[href],a[rel~="category"],a[href*="/series/"],a[href*="/season/"],a[href*="/show/"],a[href*="/anime/"],a[href*="مسلسل"]'), function (a) {
+          var href = abs(a.getAttribute('href'), u), pth = '';
+          try { pth = new URL(href).pathname; } catch (e) {}
+          if (!href || href === u || host(href) !== h0 || pth.length < 3 || /\/(category|genre|tag|page)\//i.test(pth)) return;
+          if (/episode|الحلقة|حلقة/i.test(dec(href))) return;
+          best = href;
+        });
+        return best;
+      }
+      function nextLink(d, u) {
+        var a = d.querySelector('link[rel="next"],a[rel="next"],a.next,a.page-numbers.next,.pagination a.next');
+        var h = a ? abs(a.getAttribute('href'), u) : '';
+        return h && h !== u && host(h) === h0 ? h : '';
+      }
+      grab(doc, url);
+      var title = h1Of(doc) || item.title, poster = item.poster || metaOf(doc, 'og:image'), desc = clean(metaOf(doc, 'og:description') || metaOf(doc, 'description'));
+      var isEp = /الحلقة|حلقة|episode/i.test(dec(url) + ' ' + title);
+      if (isEp) add(url, title);                                   // the episode that was opened is part of the list too
+      var par = parentLink(doc, url);
+      if (par) {
+        try {
+          var pd = parse(await getHtml(par)), pu = par, pages = 0;
+          var pt = h1Of(pd); if (pt) { title = pt; poster = metaOf(pd, 'og:image') || poster; desc = clean(metaOf(pd, 'og:description') || metaOf(pd, 'description')) || desc; }
+          grab(pd, pu);
+          for (var nx = nextLink(pd, pu); nx && pages < 6; pages++) {
+            pd = parse(await getHtml(nx)); pu = nx; grab(pd, pu); nx = nextLink(pd, pu);
+          }
+        } catch (e) { /* keep what the episode page itself listed */ }
+      } else if (isEp) {
+        title = title.replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').trim() || title;
+      }
+      // oldest first, per season
+      if (eps.some(function (e) { return e.n > 0; })) {
+        eps = eps.map(function (e, i) { e.k = i; return e; }).sort(function (a, b) {
+          return ((+a.season || 0) - (+b.season || 0)) || (a.n - b.n) || (a.k - b.k);
+        });
+      }
+      eps.forEach(function (e) { delete e.n; delete e.k; });
+      return { title: title, poster: poster, desc: desc, episodes: eps };
     },
 
     getLinks: async function (cfg, target) {

@@ -435,7 +435,7 @@
       var crawled = {}, labels = {}, refs = {}, relays = {}, labelFor = {}, lastN = 0, lastLabel = '', lastRef = page, lastRelay = false;
       function flushLabels() { for (; lastN < direct.length; lastN++) { labels[direct[lastN]] = lastLabel; refs[direct[lastN]] = lastRef; relays[direct[lastN]] = lastRelay; } }
       var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
-      while (queue.length && fetched < 10 && !direct.length) {
+      while (queue.length && fetched < 9 && direct.length < 3) {
         var q = queue.shift();
         if (seenQ[q.u]) continue; seenQ[q.u] = 1; fetched++;
         flushLabels(); lastLabel = labelFor[q.u] || ''; lastRef = q.u;

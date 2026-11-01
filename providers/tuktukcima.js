@@ -18,6 +18,12 @@
   function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
 
   async function getHtml(url) { return MediaHub.getText(url); }
+  // Fetch from the TV itself first (stream links are often tied to the requester's network); fall back to the relay.
+  async function smartText(url, opt) {
+    opt = opt || {};
+    try { return { t: await MediaHub.getText(url, Object.assign({}, opt, { direct: true })), relay: false }; }
+    catch (e1) { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
+  }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
   function diag(html, url) {
     var t = (html.match(/<title[^>]*>([^<]*)/i) || [])[1] || '';
@@ -252,8 +258,8 @@
         }
         if (got) { scan(got); addEmbed(got, page); }
       }
-      var crawled = {}, labels = {}, refs = {}, labelFor = {}, lastN = 0, lastLabel = '', lastRef = page;
-      function flushLabels() { for (; lastN < direct.length; lastN++) { labels[direct[lastN]] = lastLabel; refs[direct[lastN]] = lastRef; } }
+      var crawled = {}, labels = {}, refs = {}, relays = {}, labelFor = {}, lastN = 0, lastLabel = '', lastRef = page, lastRelay = false;
+      function flushLabels() { for (; lastN < direct.length; lastN++) { labels[direct[lastN]] = lastLabel; refs[direct[lastN]] = lastRef; relays[direct[lastN]] = lastRelay; } }
       var queue = embeds.map(function (u) { return { u: u, d: 0, ref: page }; }), seenQ = {}, fetched = 0, eReport = [];
       while (queue.length && fetched < 10 && !direct.length) {
         var q = queue.shift();
@@ -269,12 +275,13 @@
           }
         }
         var txt;
-        try { txt = await MediaHub.getText(q.u, { referer: q.ref }); }
+        var viaRelay = false;
+        try { var sr = await smartText(q.u, { referer: q.ref }); txt = sr.t; viaRelay = sr.relay; }
         catch (e1) {
           try { txt = await MediaHub.getText(q.u, { referrerPolicy: 'no-referrer' }); }
           catch (e2) { eReport.push(q.u.slice(0, 300) + ' -> ' + (e1 && e1.message)); continue; }
         }
-        eReport.push(host(q.u) + ' ' + txt.length);
+        eReport.push(host(q.u) + ' ' + txt.length + (viaRelay ? ' r' : ' d')); lastRelay = viaRelay;
         var txt2 = unent(txt), all = txt2 + unpackAll(txt2) + decodeB64(txt2);
         scan(all);
         all.replace(FILEKEY, function (m0, u) {
@@ -301,9 +308,10 @@
               'servers', 'subtitles', 'tracks', 'playlist', 'playlists', 'manifest', 'download', 'downloads', 'directLink', 'direct'];
             Object.keys(pd.deferredProps || {}).forEach(function (g) { dn = dn.concat(pd.deferredProps[g]); });
             try {
-              var dj = await MediaHub.getJSON(q.u, { referer: q.u, headers: {
+              var sj = await smartText(q.u, { referer: q.u, headers: {
                 'X-Inertia': 'true', 'X-Inertia-Version': pd.version || '', 'X-Inertia-Partial-Component': pd.component || '',
                 'X-Inertia-Partial-Data': dn.join(','), 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html, application/xhtml+xml' } });
+              var dj = JSON.parse(sj.t);
               var fresh = [];
               if (dj && dj.props) Object.keys(dj.props).forEach(function (k) { if (!(k in pd.props)) fresh.push(k); pd.props[k] = dj.props[k]; });
               var sdata = (dj && dj.props && dj.props.streams && dj.props.streams.data) || [];
@@ -370,7 +378,7 @@
       if (!direct.length) {
         throw new Error('No video link. ' + eReport.join(' ; ') + ' | page ' + report.join('; '));
       }
-      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: refs[u] || page, relay: true }; });
+      return direct.map(function (u, n) { return { url: u, label: labels[u] || ('Server ' + (n + 1)), referer: refs[u] || page, relay: !!relays[u] }; });
     }
   });
 })();

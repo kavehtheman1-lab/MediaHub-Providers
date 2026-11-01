@@ -187,11 +187,13 @@
 
   // episode links on a page
   function extractEps(d, u, h0) {
-    var out = [];
+    var out = [], words = slugOf(u).slice(0, 2);
     [].forEach.call(d.querySelectorAll('a[href]'), function (a) {
       var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
       if (!href || href === u || host(href) !== h0) return;
-      if (/episode|الحلقة|حلقة/i.test(dec(href)) || /^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) out.push({ href: href, t: t });
+      var dh = dec(href).toLowerCase();
+      if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
+      if (/episode|الحلقة|حلقة|s\d+e\d+|[-_/]ep-?\d+/i.test(dh) || /(?:الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) out.push({ href: href, t: t });
     });
     return out;
   }
@@ -361,6 +363,12 @@
       got.eps.forEach(function (e) { if (!seen[e.href]) { seen[e.href] = 1; out.push({ id: e.href, url: e.href, title: e.t || 'Episode', n: epNum(dec(e.href) + ' ' + e.t) }); } });
       out.sort(function (a, b) { return a.n - b.n; });
       out.forEach(function (e) { if (e.n) e.title = 'الحلقة ' + e.n; delete e.n; });
+      if (!out.length) {
+        var d2 = got.doc || parse(await getHtml(meta.url)), as = d2.querySelectorAll('a[href]'), smp = [];
+        [].forEach.call(as, function (a) { var t = clean(a.textContent); if (t && t.length < 28 && smp.length < 6 && smp.indexOf(t) < 0) smp.push(t); });
+        var pth = ''; try { pth = decodeURIComponent(new URL(meta.url).pathname).slice(0, 60); } catch (e) {}
+        throw new Error('no episodes in ' + pth + ' (' + as.length + ' links; title: ' + h1Of(d2).slice(0, 40) + '; links: ' + smp.join(' / ') + ')');
+      }
       return out;
     },
 

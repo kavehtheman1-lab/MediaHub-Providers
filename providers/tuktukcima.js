@@ -272,6 +272,10 @@
   function cleanSeries(t) {
     return clean(String(t).replace(/^\s*(?:مسلسل|فيلم|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:الموسم|موسم|season)\s*[\d\u0660-\u0669]+.*$/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*مترجم[ةه]?\s*$/i, ''));
   }
+  // trailers and social-video hosts show up in page metadata; they are not the episode
+  function isJunk(u) {
+    return /imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
+  }
   // quick health check of a stream address, as the TV itself would open it
   async function verifyLink(u) {
     try {
@@ -424,8 +428,9 @@
       var tail = page.charAt(page.length - 1) === '/' ? '' : '/';
       tried.push(page + tail + 'watch/');
       var direct = [], embeds = [], posts = [], stats = { iframe: 0, nume: 0 }, hosts = {}, h0 = host(base);
+      function addDirect(u) { if (u && !isJunk(u) && direct.indexOf(u) < 0) direct.push(u); }
       function scan(text) {
-        String(text).replace(/\\\//g, '/').replace(MEDIA, function (m) { if (direct.indexOf(m) < 0) direct.push(m); return m; });
+        String(text).replace(/\\\//g, '/').replace(MEDIA, function (m) { addDirect(m); return m; });
       }
       function addEmbed(u, from) {
         u = abs(String(u || '').replace(/&amp;/g, '&'), from);
@@ -498,11 +503,11 @@
         scan(all);
         all.replace(FILEKEY, function (m0, u) {
           u = u.replace(/\\\//g, '/');
-          if (!NOTMEDIA.test(u) && direct.indexOf(u) < 0 && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) direct.push(u);
+          if (!NOTMEDIA.test(u) && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) addDirect(u);
           return m0;
         });
         encodedUrls(all).forEach(function (u) {
-          if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) { if (direct.indexOf(u) < 0) direct.push(u); }
+          if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) addDirect(u);
           else if (q.d < 3 && !seenQ[u]) queue.push({ u: u, d: q.d + 1, ref: q.u });
         });
         var mh = q.u.match(/^(https?:\/\/[^\/]+)\/iframe\/([A-Za-z0-9]+)/);
@@ -543,7 +548,7 @@
           if (pd && !pd.props) eReport.push('[' + tag + '] pd keys: ' + Object.keys(pd).join(','));
           if (pd && pd.props) {
             var lv = leaves(pd.props, '', [], 0);
-            lv.forEach(function (l) { if (/^https?:\/\/[^\s]+\.(m3u8|mp4|mkv|webm)(\?|$)/i.test(l.v) && direct.indexOf(l.v) < 0) direct.push(l.v); });
+            lv.forEach(function (l) { if (/^https?:\/\/[^\s]+\.(m3u8|mp4|mkv|webm)(\?|$)/i.test(l.v) ) addDirect(l.v); });
             var get = function (names) {
               for (var a1 = 0; a1 < names.length; a1++) for (var b1 = 0; b1 < lv.length; b1++) if (lv[b1].k === names[a1] && lv[b1].v) return lv[b1].v;
               return '';
@@ -562,7 +567,7 @@
                 try {
                   var ct = await MediaHub.getText(cands[ci].u, { referer: q.u, method: cands[ci].hls ? 'GET' : 'HEAD' });
                   eReport.push('try ' + host(cands[ci].u) + ' ok');
-                  if (!cands[ci].hls || /^#EXTM3U/.test(ct)) direct.push(cands[ci].u);
+                  if (!cands[ci].hls || /^#EXTM3U/.test(ct)) addDirect(cands[ci].u);
                 } catch (e) { eReport.push('try ' + host(cands[ci].u) + ' ' + (e && e.message)); }
               }
             }

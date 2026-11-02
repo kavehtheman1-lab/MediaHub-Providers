@@ -12,7 +12,7 @@
   var LABELS = 'الاستوديو|المصدر|الحلقات|الموسم|السنة|المدة|البلد|التصنيف العمري|التصنيف|النوع|الحالة|العرض|بداية العرض|نهاية العرض|studio|source|episodes|season|year|duration|country|rating|status|type';
 
   var SITE = '';
-  var SELF = /https?:\/\/(?:[a-z0-9-]+\.)?anime4up\.[a-z]+/gi;
+  var SELF = /https?:\/\/(?:[a-z0-9-]+\.)?anime4up\.(?:rest|com|tv|cc|net|org|site|shop|io|me|info|co)(?![a-z0-9.-]*[a-z0-9])/gi;
   // ---------- small helpers ----------
   function baseOf(cfg) {
     var u = String((cfg && cfg.url) || '').trim();
@@ -263,7 +263,8 @@
     var out = [], seen = {};
     function add(raw, name, q) {
       var u = normUrl(raw, pageUrl);
-      if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u) || host(u) === host(pageUrl)) return;
+      if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u)) return;
+      if (host(u) === host(pageUrl) && !/embed|player|iframe|\/e\/|\/v\//i.test(u)) return;
       if (!KNOWN.test(u)) return;
       seen[u] = 1; out.push({ url: u, name: clean(name).slice(0, 22), q: q || '' });
     }
@@ -281,12 +282,14 @@
     (all.replace(/\\\//g, '/').match(/https?:\/\/[^"'\s<>\\)]+/g) || []).forEach(function (u) { add(u, '', ''); });
     return out;
   }
-  function serverRank(u) {
+  function serverRank(u, name) {
     var h = host(u);
+    if (/anime4up|megamax/i.test(name || '') || /megamax/i.test(h)) return 0;
     if (/ok\.ru/.test(h)) return 1;
     if (/hgcloud|hglink|haxloppd|streamwish|wishfast|swish|wish|vidhide|filelions|filemoon|dhcplay|minochinos|cybervynx/.test(h)) return 2;
     if (/yonaplay/.test(h)) return 3;
-    if (/sendvid|dood|playmogo|mogo|ds2play|d000d|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
+    if (/sendvid|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
+    if (/dood|playmogo|mogo|ds2play|d000d/.test(h)) return 7;
     if (/videa/.test(h)) return 6;
     if (/mp4upload/.test(h)) return 9;
     return 5;
@@ -456,7 +459,8 @@
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
       var html = await getHtml(page), doc = parse(html);
       var servers = collectServers(doc, html, page);
-      servers.sort(function (a, b) { return serverRank(a.url) - serverRank(b.url); });
+      servers.sort(function (a, b) { return serverRank(a.url, a.name) - serverRank(b.url, b.name); });
+      try { MediaHub.note('anime4up list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}
       var links = [], tried = 0, good0 = 0;
       for (var i = 0; i < servers.length && tried < 12 && good0 < 4; i++) {
         tried++;

@@ -320,7 +320,14 @@
     if (!m) return null;
     var origin = abs(sv.url, sv.url).replace(/^(https?:\/\/[^\/]+).*$/, '$1');
     var tk = (txt.match(/[?&]token=([A-Za-z0-9]+)/) || [])[1] || m[0].split('/').pop();
-    var r = await smartText(origin + m[0], { referer: sv.url }), base = String(r.t).trim();
+    var viaRelay = !!MediaHub.proxy;
+    if (viaRelay) {
+      try {
+        var pg = await MediaHub.getText(sv.url, { referer: sv.url });
+        var m2 = pg.match(/\/pass_md5\/[^'"\s<>\\]+/); if (m2) { m = m2; tk = (pg.match(/[?&]token=([A-Za-z0-9]+)/) || [])[1] || m2[0].split('/').pop(); }
+      } catch (e) { viaRelay = false; }
+    }
+    var r = viaRelay ? { t: await MediaHub.getText(origin + m[0], { referer: sv.url }), relay: true } : await smartText(origin + m[0], { referer: sv.url }), base = String(r.t).trim();
     if (!/^https?:\/\//i.test(base)) throw new Error('pass_md5 gave "' + base.slice(0, 30) + '"');
     var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', rnd = '';
     for (var i = 0; i < 10; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -460,7 +467,7 @@
       var html = await getHtml(page), doc = parse(html);
       var servers = collectServers(doc, html, page);
       servers.sort(function (a, b) { return serverRank(a.url, a.name) - serverRank(b.url, b.name); });
-      try { MediaHub.note('anime4up list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}
+      try { MediaHub.note('anime4up v3 list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}
       var links = [], tried = 0, good0 = 0;
       for (var i = 0; i < servers.length && tried < 12 && good0 < 4; i++) {
         tried++;

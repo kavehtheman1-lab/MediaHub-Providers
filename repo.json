@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 3,
+  "version": 4,
   "providers": [
     {
       "name": "Akwam",
@@ -36,6 +36,18 @@
       "types": [
         "Anime",
         "TvSeries"
+      ]
+    },
+    {
+      "name": "Anime4up",
+      "id": "anime4up",
+      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/anime4up.js",
+      "version": "0.1.0",
+      "language": "ar",
+      "types": [
+        "Anime",
+        "TvSeries",
+        "Movie"
       ]
     }
   ]

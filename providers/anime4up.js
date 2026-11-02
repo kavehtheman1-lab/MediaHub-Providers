@@ -239,7 +239,7 @@
   }
 
   // ---------- video servers ----------
-  var KNOWN = /ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|filemoon|sendvid|vk\.com|embed|\/e\/|player|\/v\//i;
+  var KNOWN = /ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|filemoon|sendvid|vk\.com|swish|wish|vidhide|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|embed|\/e\/|player|\/v\//i;
   function normUrl(raw, base) {
     raw = unent(String(raw || '').trim());
     if (!raw || raw.length > 900 || /^(javascript|#|mailto)/i.test(raw)) return '';
@@ -284,10 +284,11 @@
   function serverRank(u) {
     var h = host(u);
     if (/ok\.ru/.test(h)) return 1;
-    if (/hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|filemoon/.test(h)) return 2;
+    if (/hgcloud|hglink|haxloppd|streamwish|wishfast|swish|wish|vidhide|filelions|filemoon|dhcplay|minochinos|cybervynx/.test(h)) return 2;
     if (/yonaplay/.test(h)) return 3;
-    if (/mp4upload|sendvid|dood|voe/.test(h)) return 4;
+    if (/sendvid|dood|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
     if (/videa/.test(h)) return 6;
+    if (/mp4upload/.test(h)) return 9;
     return 5;
   }
 
@@ -423,12 +424,17 @@
       var html = await getHtml(page), doc = parse(html);
       var servers = collectServers(doc, html, page);
       servers.sort(function (a, b) { return serverRank(a.url) - serverRank(b.url); });
-      var links = [], tried = 0;
-      for (var i = 0; i < servers.length && tried < 8 && links.length < 4; i++) {
+      var links = [], tried = 0, good0 = 0;
+      for (var i = 0; i < servers.length && tried < 12 && good0 < 4; i++) {
         tried++;
         var got = await extractServer(servers[i], page, rep);
-        got.forEach(function (g) { if (links.length < 6) links.push(g); });
+        got.forEach(function (g) { if (links.length < 8) { links.push(g); if (!/mp4upload/.test(host(servers[i].url))) good0++; } });
       }
+      // mp4upload needs a Referer and a non-standard port, so it fails on the TV and through the relay: only keep it when nothing else worked
+      if (links.some(function (l) { return !/mp4upload/.test(host(l.url)) && !/mp4upload/.test(l.name || ''); })) {
+        links = links.filter(function (l) { return !/mp4upload/i.test(l.name || '') && !/mp4upload/.test(l.ref || ''); });
+      }
+      try { MediaHub.note('anime4up servers', servers.length + ' found: ' + rep.join('; ')); } catch (e) {}
       if (links.length > 1) {                          // keep the HLS/mp4 addresses the TV can really open
         var oks = await Promise.all(links.map(function (l) { return (l.relay || !/\.m3u8/i.test(l.url)) ? Promise.resolve(true) : verifyHls(l.url); }));
         var good = links.filter(function (l, i2) { return oks[i2]; });

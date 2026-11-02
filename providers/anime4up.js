@@ -115,7 +115,7 @@
     if (!t) { t = clean(a.textContent).replace(/^(?:الحلقة\s*\d+\s*)+/, ''); }
     return t;
   }
-  function cards(doc, base) {
+  function cardsGeneric(doc, base) {
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
     [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,a[href]'), function (n) {
@@ -134,6 +134,40 @@
       cur.items.push({ id: href, url: href, title: title, poster: picOf(n, base) });
     });
     return groups.filter(function (g) { return g.items.length; });
+  }
+
+  // Anime4up cards: the title is an <h3><a href=anime page>, the poster <img> sits in a sibling element of the same card.
+  function imgUrl(img, base) {
+    if (!img) return '';
+    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    if (/^data:/.test(u)) u = '';
+    if (!u) { var ss = img.getAttribute('data-srcset') || img.getAttribute('srcset') || ''; u = (ss.split(',')[0] || '').trim().split(/\s+/)[0]; }
+    return u ? abs(u, base) : '';
+  }
+  function cards(doc, base) {
+    var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
+    groups.push(cur);
+    [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,h4'), function (h) {
+      var a = h.querySelector('a[href]');
+      if (!a) {
+        var t = clean(h.textContent);
+        if (t && t.length < 50) { if (cur.items.length) { cur = { title: t, items: [] }; groups.push(cur); } else cur.title = t; }
+        return;
+      }
+      var href = abs(a.getAttribute('href'), base);
+      if (!href || host(href) !== h0 || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/' || seen[href]) return;
+      var title = clean(a.textContent) || clean(a.getAttribute('title'));
+      if (!title || title.length > 140) return;
+      var img = null, el = h.parentElement;
+      for (var up = 0; el && up < 4 && !img; up++, el = el.parentElement) {
+        if (el.querySelectorAll('h3 a[href],h2 a[href],h4 a[href]').length > 1) break;
+        img = el.querySelector('img');
+      }
+      seen[href] = 1;
+      cur.items.push({ id: href, url: href, title: title, poster: imgUrl(img, base) });
+    });
+    var out = groups.filter(function (g) { return g.items.length; });
+    return out.length ? out : cardsGeneric(doc, base);
   }
   function searchCards(html, base) { var out = []; cards(parse(html), base).forEach(function (g) { out = out.concat(g.items); }); return out; }
   function nextLink(d, u, h0) {

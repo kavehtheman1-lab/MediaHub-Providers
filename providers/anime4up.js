@@ -48,7 +48,7 @@
     catch (e1) { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
   }
   function isJunk(u) {
-    return /imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|myanimelist|anilist|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
+    return /googleusercontent|gstatic|favicon|imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|myanimelist|anilist|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
   }
   function metaOf(d, p) { var m = d.querySelector('meta[property="' + p + '"],meta[name="' + p + '"]'); return m ? m.getAttribute('content') : ''; }
   function h1Of(d) { var h = d.querySelector('h1'); return clean(h && h.textContent) || clean(metaOf(d, 'og:title')); }
@@ -273,11 +273,11 @@
   }
   function collectServers(doc, html, pageUrl) {
     var out = [], seen = {};
-    function add(raw, name, q) {
+    function add(raw, name, q, auth) {
       var u = normUrl(raw, pageUrl);
       if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u)) return;
       if (host(u) === host(pageUrl) && !/embed|player|iframe|\/e\/|\/v\//i.test(u)) return;
-      if (!KNOWN.test(u)) return;
+      if (!KNOWN.test(u) && !auth) return;
       seen[u] = 1; out.push({ url: u, name: clean(name).slice(0, 22), q: q || '' });
     }
     [].forEach.call(doc.querySelectorAll('*'), function (el) {
@@ -286,7 +286,7 @@
         var nm = at[i].name;
         if (/^data-/.test(nm) || nm === 'href' || nm === 'src' || nm === 'value') {
           var v = at[i].value;
-          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el));
+          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el), /^data-(ep-)?(url|src|embed|link|iframe|player)$/i.test(nm));
         }
       }
     });
@@ -359,11 +359,89 @@
       return j.source || j.direct_access_url || '';
     } catch (e) { return ''; }
   }
+  // ---------- AES-128-CBC decrypt (small, no dependencies: the TV's WebCrypto is not always available) ----------
+  var AES_SBOX = null, AES_INV = null;
+  function aesInit() {
+    if (AES_SBOX) return;
+    var s = new Array(256), inv = new Array(256), p = 1, q = 1;
+    function rotl(x, n) { return ((x << n) | (x >> (8 - n))) & 255; }
+    do {
+      p = p ^ ((p << 1) & 255) ^ (p & 128 ? 27 : 0);
+      q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 255; if (q & 128) q ^= 9;
+      var x = q ^ rotl(q, 1) ^ rotl(q, 2) ^ rotl(q, 3) ^ rotl(q, 4) ^ 99;
+      s[p] = x; inv[x] = p;
+    } while (p !== 1);
+    s[0] = 99; inv[99] = 0;
+    AES_SBOX = s; AES_INV = inv;
+  }
+  function gmul(a, b) { var r = 0; while (b) { if (b & 1) r ^= a; a = ((a << 1) & 255) ^ (a & 128 ? 27 : 0); b >>= 1; } return r; }
+  function aesKeys(key) {
+    var w = [], i, t, rc = 1;
+    for (i = 0; i < 16; i++) w[i] = key[i];
+    for (i = 16; i < 176; i += 4) {
+      t = [w[i - 4], w[i - 3], w[i - 2], w[i - 1]];
+      if (i % 16 === 0) { t = [AES_SBOX[t[1]] ^ rc, AES_SBOX[t[2]], AES_SBOX[t[3]], AES_SBOX[t[0]]]; rc = ((rc << 1) & 255) ^ (rc & 128 ? 27 : 0); }
+      for (var j = 0; j < 4; j++) w[i + j] = w[i - 16 + j] ^ t[j];
+    }
+    return w;
+  }
+  function aesBlockDec(b, w) {
+    var st = b.slice(), r, i, c;
+    function add(rk) { for (var k = 0; k < 16; k++) st[k] ^= w[rk * 16 + k]; }
+    add(10);
+    for (r = 9; r >= 0; r--) {
+      var t = st.slice();                                   // inverse shift rows
+      for (c = 0; c < 4; c++) for (i = 0; i < 4; i++) st[((c + i) % 4) * 4 + i] = t[c * 4 + i];
+      for (i = 0; i < 16; i++) st[i] = AES_INV[st[i]];
+      add(r);
+      if (r > 0) for (c = 0; c < 4; c++) {                  // inverse mix columns
+        var a0 = st[c * 4], a1 = st[c * 4 + 1], a2 = st[c * 4 + 2], a3 = st[c * 4 + 3];
+        st[c * 4] = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9);
+        st[c * 4 + 1] = gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13);
+        st[c * 4 + 2] = gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11);
+        st[c * 4 + 3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14);
+      }
+    }
+    return st;
+  }
+  function aesCbcHex(hex, keyStr, ivStr) {
+    aesInit();
+    var d = [], i, j;
+    for (i = 0; i + 1 < hex.length; i += 2) d.push(parseInt(hex.substr(i, 2), 16));
+    var key = [], iv = [];
+    for (i = 0; i < 16; i++) { key.push(keyStr.charCodeAt(i) & 255); iv.push(ivStr.charCodeAt(i) & 255); }
+    var w = aesKeys(key), out = '', prev = iv;
+    for (i = 0; i + 16 <= d.length; i += 16) {
+      var blk = d.slice(i, i + 16), pl = aesBlockDec(blk, w);
+      for (j = 0; j < 16; j++) out += String.fromCharCode(pl[j] ^ prev[j]);
+      prev = blk;
+    }
+    var pad = out.charCodeAt(out.length - 1); if (pad > 0 && pad <= 16) out = out.slice(0, out.length - pad);
+    return out;
+  }
+
+  async function vidstackLinks(sv, page, rep) {
+    var u; try { u = new URL(sv.url); } catch (e) { return []; }
+    var id = u.hash.replace(/^#/, '') || (u.searchParams && (u.searchParams.get('id') || u.searchParams.get('v'))) || '';
+    if (!id) { var seg = u.pathname.split('/').filter(Boolean); if (seg.length > 1 && /^(e|embed|v|d|f)$/i.test(seg[seg.length - 2])) id = seg[seg.length - 1]; }
+    if (!id) return [];
+    var api = u.origin + '/api/v1/video?id=' + encodeURIComponent(id) + '&w=1920&h=1080&r=' + encodeURIComponent(realRef(page));
+    var r = await relayFirst(api, { referer: sv.url }), t = String(r.t).trim();
+    var plain = t;
+    if (/^[0-9a-f]{32,}$/i.test(t)) plain = aesCbcHex(t, 'kiemtienmua911ca', '1234567890oiuytr');
+    var urls = [], seenU = {};
+    plain.replace(/\\\//g, '/').replace(/"(?:source|hls|file|url|cf)"\s*:\s*"(https?:\/\/[^"]+)"/gi, function (m0, x) { if (!seenU[x] && !NOTMEDIA.test(x)) { seenU[x] = 1; urls.push(x); } return m0; });
+    if (!urls.length) { plain.replace(MEDIA, function (m0) { if (!seenU[m0]) { seenU[m0] = 1; urls.push(m0); } return m0; }); }
+    if (!urls.length) { rep.push(host(sv.url).slice(0, 12) + ' api: ' + plain.replace(/\s+/g, ' ').slice(0, 38)); return []; }
+    rep.push(host(sv.url).slice(0, 12) + ' api ok ' + urls.length);
+    return urls.map(function (x) { return { url: x, q: '', relay: true, ref: u.origin + '/', name: sv.name, sq: sv.q }; });
+  }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
     if (/mega\.nz|mega\.io/.test(h)) return [];
     var r;
     var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
+    if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
     try { r = pri ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
     function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
@@ -499,8 +577,8 @@
       }
       if (!links.length) {
         var dat = {}; [].forEach.call(doc.querySelectorAll('*'), function (el) { if (el.attributes) for (var j = 0; j < el.attributes.length; j++) if (/^data-/.test(el.attributes[j].name)) dat[el.attributes[j].name] = 1; });
-        var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 14); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
-        throw new Error('v4 No video link | ' + rep.join('; ') + ' | servers ' + servers.length + ': ' + (lst.join(' ; ') || 'only mega'));
+        var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { var uu = new URL(x.url); pu = (uu.pathname + uu.search + uu.hash).slice(0, 18); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
+        throw new Error('v5 No video link | ' + rep.join('; ') + ' | servers ' + servers.length + ': ' + (lst.join(' ; ') || 'only mega'));
       }
       return links.map(function (l, n) {
         var nm = (l.name || host(l.url).split('.').slice(-2, -1)[0] || 'Server') + (l.sq ? ' ' + l.sq : '') + (l.q ? ' ' + l.q : '');

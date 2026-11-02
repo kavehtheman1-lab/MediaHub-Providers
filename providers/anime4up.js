@@ -239,7 +239,7 @@
   }
 
   // ---------- video servers ----------
-  var KNOWN = /ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|filemoon|sendvid|vk\.com|swish|wish|vidhide|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|embed|\/e\/|player|\/v\//i;
+  var KNOWN = /ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|playmogo|filemoon|sendvid|vk\.com|swish|wish|vidhide|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|embed|\/e\/|player|\/v\//i;
   function normUrl(raw, base) {
     raw = unent(String(raw || '').trim());
     if (!raw || raw.length > 900 || /^(javascript|#|mailto)/i.test(raw)) return '';
@@ -286,7 +286,7 @@
     if (/ok\.ru/.test(h)) return 1;
     if (/hgcloud|hglink|haxloppd|streamwish|wishfast|swish|wish|vidhide|filelions|filemoon|dhcplay|minochinos|cybervynx/.test(h)) return 2;
     if (/yonaplay/.test(h)) return 3;
-    if (/sendvid|dood|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
+    if (/sendvid|dood|playmogo|mogo|ds2play|d000d|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
     if (/videa/.test(h)) return 6;
     if (/mp4upload/.test(h)) return 9;
     return 5;
@@ -310,6 +310,33 @@
   }
 
   // open a server page and pull out the stream address(es)
+
+  // ---------- Doodstream family (playmogo.com, dood.*, ds2play ...) ----------
+  async function doodLinks(txt, sv) {
+    var m = txt.match(/\/pass_md5\/[^'"\s<>\\]+/);
+    if (!m) return null;
+    var origin = abs(sv.url, sv.url).replace(/^(https?:\/\/[^\/]+).*$/, '$1');
+    var tk = (txt.match(/[?&]token=([A-Za-z0-9]+)/) || [])[1] || m[0].split('/').pop();
+    var r = await smartText(origin + m[0], { referer: sv.url }), base = String(r.t).trim();
+    if (!/^https?:\/\//i.test(base)) throw new Error('pass_md5 gave "' + base.slice(0, 30) + '"');
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', rnd = '';
+    for (var i = 0; i < 10; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length));
+    return { url: base + rnd + '?token=' + tk + '&expiry=' + Date.now(), relay: r.relay, ref: origin + '/' };
+  }
+  // ---------- VOE (best effort: the page hides the playlist in an encoded JSON blob) ----------
+  function voeSource(txt) {
+    try {
+      var h = txt.match(/["']hls["']\s*:\s*["']([A-Za-z0-9+\/=]{20,})["']/);
+      if (h) { var u = b64text(h[1]); if (/^https?:/i.test(u)) return u; }
+      var m = txt.match(/<script[^>]*type=["']application\/json["'][^>]*>\s*\[\s*"([^"]+)"\s*\]/i);
+      if (!m) return '';
+      var x = m[1].replace(/[a-zA-Z]/g, function (c) { var k = c.charCodeAt(0) + 13; return String.fromCharCode((c <= 'Z' ? 90 : 122) >= k ? k : k - 26); });
+      ['@$', '^^', '~@', '%?', '*~', '!!', '#&'].forEach(function (q) { x = x.split(q).join(''); });
+      x = b64text(x).split('').map(function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 3); }).reverse().join('');
+      var j = JSON.parse(b64text(x));
+      return j.source || j.direct_access_url || '';
+    } catch (e) { return ''; }
+  }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
     if (/mega\.nz|mega\.io/.test(h)) { rep.push(sv.name + ' mega: needs decryption, skipped'); return []; }
@@ -318,6 +345,12 @@
     var txt = r.t, found = [], seen = {};
     function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
     if (/ok\.ru/.test(h)) okLinks(txt).forEach(function (x) { push(x.url, x.q); });
+    if (/\/pass_md5\//.test(txt)) {
+      try { var dl = await doodLinks(txt, sv); if (dl) { rep.push(h + ' dood ok'); return [{ url: dl.url, q: '', relay: dl.relay, ref: dl.ref, name: sv.name, sq: sv.q }]; } }
+      catch (e) { rep.push(h + ' dood: ' + (e && e.message)); }
+    }
+    var vs = voeSource(txt);
+    if (vs) push(vs);
     var all = unent(txt) + unpackAll(unent(txt)) + hiddenText(unent(txt));
     if (!found.length) {
       all.replace(/\\\//g, '/').replace(MEDIA, function (m0) { push(m0); return m0; });

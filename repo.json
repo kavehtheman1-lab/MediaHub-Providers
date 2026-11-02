@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 2,
+  "version": 3,
   "providers": [
     {
       "name": "Akwam",
@@ -9,7 +9,12 @@
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/akwam.js",
       "version": "1.0.0",
       "language": "ar",
-      "types": ["Movie", "TvSeries", "Anime", "AsianDrama"]
+      "types": [
+        "Movie",
+        "TvSeries",
+        "Anime",
+        "AsianDrama"
+      ]
     },
     {
       "name": "Tuktukcima",
@@ -17,7 +22,21 @@
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/tuktukcima.js",
       "version": "0.26.0",
       "language": "ar",
-      "types": ["Movie", "TvSeries"]
+      "types": [
+        "Movie",
+        "TvSeries"
+      ]
+    },
+    {
+      "name": "Witanime",
+      "id": "witanime",
+      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/witanime.js",
+      "version": "0.1.0",
+      "language": "ar",
+      "types": [
+        "Anime",
+        "TvSeries"
+      ]
     }
   ]
 }

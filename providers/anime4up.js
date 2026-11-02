@@ -28,7 +28,19 @@
   function latin(d) { return String(d).replace(/[\u0660-\u0669]/g, function (c) { return c.charCodeAt(0) - 0x660; }); }
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
-  async function getHtml(url) { var t = await MediaHub.getText(url); return SITE ? t.replace(SELF, SITE) : t; }
+  var REAL = '';
+  async function getHtml(url) {
+    var t = await MediaHub.getText(url);
+    var m = t.match(/<link[^>]+rel=["']canonical["'][^>]*href=["'](https?:\/\/[^\/"']+)/i) || t.match(/<link[^>]+href=["'](https?:\/\/[^\/"']+)[^>]*rel=["']canonical["']/i) || t.match(/property=["']og:url["'][^>]*content=["'](https?:\/\/[^\/"']+)/i);
+    if (m && /anime4up/i.test(m[1])) REAL = m[1];
+    return SITE ? t.replace(SELF, SITE) : t;
+  }
+  function realRef(u) { return REAL && SITE ? String(u).replace(SITE, REAL) : u; }
+  // servers that check the Referer: ask through the relay first (it can send one), the TV itself cannot
+  async function relayFirst(url, opt) {
+    if (MediaHub.proxy) { try { return { t: await MediaHub.getText(url, opt), relay: true }; } catch (e) { var e1 = e; } }
+    return smartText(url, opt);
+  }
   // the TV's own network first (stream links are tied to the requester), the relay only as a fallback
   async function smartText(url, opt) {
     opt = opt || {};
@@ -349,9 +361,10 @@
   }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
-    if (/mega\.nz|mega\.io/.test(h)) { rep.push(sv.name + ' mega: needs decryption, skipped'); return []; }
+    if (/mega\.nz|mega\.io/.test(h)) return [];
     var r;
-    try { r = await smartText(sv.url, { referer: page }); } catch (e) { rep.push(h + ' ' + (e && e.message)); return []; }
+    var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
+    try { r = pri ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
     function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
     if (/ok\.ru/.test(h)) okLinks(txt).forEach(function (x) { push(x.url, x.q); });
@@ -486,8 +499,8 @@
       }
       if (!links.length) {
         var dat = {}; [].forEach.call(doc.querySelectorAll('*'), function (el) { if (el.attributes) for (var j = 0; j < el.attributes.length; j++) if (/^data-/.test(el.attributes[j].name)) dat[el.attributes[j].name] = 1; });
-        throw new Error('No video link. servers found: ' + (servers.slice(0, 6).map(function (s) { return host(s.url); }).join(', ') || 'none') + ' | ' + rep.join('; ') +
-          ' | iframes ' + doc.querySelectorAll('iframe').length + ' | data-attrs: ' + Object.keys(dat).slice(0, 8).join(','));
+        var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 14); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
+        throw new Error('v4 No video link | ' + rep.join('; ') + ' | servers ' + servers.length + ': ' + (lst.join(' ; ') || 'only mega'));
       }
       return links.map(function (l, n) {
         var nm = (l.name || host(l.url).split('.').slice(-2, -1)[0] || 'Server') + (l.sq ? ' ' + l.sq : '') + (l.q ? ' ' + l.q : '');

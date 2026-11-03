@@ -29,11 +29,43 @@
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
   var REAL = '';
+  var HC = {}, HCN = 0, LC = {}, PREF = '';
+  try { PREF = localStorage.getItem('a4u_pref') || ''; } catch (e) {}
+  function withTimeout(p, ms) {
+    return new Promise(function (res, rej) {
+      var t = setTimeout(function () { rej(new Error('timeout')); }, ms);
+      p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+    });
+  }
+  // quality written inside a stream address (720p, quality=480, _1080.mp4 ...)
+  function qualOfUrl(u) {
+    var x = String(u), m = x.match(/[?&](?:quality|res|height|q)=(\d{3,4})p?(?![\d])/i) || x.match(/[\/_.-](\d{3,4})p(?![a-z\d])/i) || x.match(/[\/_-](2160|1440|1080|720|480|360|240)(?=[\/_.?-])/);
+    return m ? m[1] + 'p' : '';
+  }
+  // best picture of an anime page (the og:image of this site is only its logo)
+  function posterOf(d, base, title) {
+    var best = '', bs = 1, t0 = clean(title).toLowerCase().slice(0, 10);
+    [].forEach.call(d.querySelectorAll('img'), function (img) {
+      var u = imgUrl(img, base);
+      if (!u || /logo|favicon|icon|avatar|banner|sprite|loading|placeholder|emoji|flag|ads?\//i.test(u)) return;
+      var alt = clean(img.getAttribute('alt') || img.getAttribute('title')).toLowerCase(), sc = 0, p = img.parentElement, i = 0;
+      if (t0 && alt.indexOf(t0) >= 0) sc += 3;
+      if (/wp-content\/uploads|poster|cover|thumb/i.test(u)) sc += 2;
+      for (; p && i < 4; p = p.parentElement, i++) { if (/poster|thumb|cover|anime-?(details|info)|info/i.test(String(p.className && p.className.baseVal === undefined ? p.className : ''))) { sc += 2; break; } }
+      var w = +img.getAttribute('width') || 0; if (w && w < 80) sc -= 3;
+      if (sc > bs) { bs = sc; best = u; }
+    });
+    return best;
+  }
   async function getHtml(url) {
+    var hc = HC[url]; if (hc && Date.now() - hc.t < 300000) return hc.h;
     var t = await MediaHub.getText(url);
     var m = t.match(/<link[^>]+rel=["']canonical["'][^>]*href=["'](https?:\/\/[^\/"']+)/i) || t.match(/<link[^>]+href=["'](https?:\/\/[^\/"']+)[^>]*rel=["']canonical["']/i) || t.match(/property=["']og:url["'][^>]*content=["'](https?:\/\/[^\/"']+)/i);
     if (m && /anime4up/i.test(m[1])) REAL = m[1];
-    return SITE ? t.replace(SELF, SITE) : t;
+    var hout = SITE ? t.replace(SELF, SITE) : t;
+    if (++HCN > 60) { HC = {}; HCN = 1; }
+    HC[url] = { t: Date.now(), h: hout };
+    return hout;
   }
   function realRef(u) { return REAL && SITE ? String(u).replace(SITE, REAL) : u; }
   // servers that check the Referer: ask through the relay first (it can send one), the TV itself cannot
@@ -440,8 +472,15 @@
     var dd = /dood|playmogo|ds2play|d000d|mogo/i.test(h);
     try { r = (pri || dd) ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
-    function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
+    function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || qualOfUrl(u) }); } }
     if (/ok\.ru/.test(h)) okLinks(txt).forEach(function (x) { push(x.url, x.q); });
+    if (/vk\.com|vkvideo|vk\.ru/.test(h)) {                  // vk lists its files as "url720":"https://..."
+      try {
+        var vkT = unent(txt).replace(/\\\//g, '/'), vm, vre = /"url(\d{3,4})"\s*:\s*"(https?:[^"]+)"/g, vka = [];
+        while ((vm = vre.exec(vkT))) vka.push({ n: +vm[1], u: vm[2] });
+        vka.sort(function (a, b) { return b.n - a.n; }).forEach(function (x) { push(x.u, x.n + 'p'); });
+      } catch (e) {}
+    }
     if (/\/pass_md5\//.test(txt)) {
       try { var dl = await doodLinks(txt, sv); if (dl) { rep.push(h + ' dood ok'); return [{ url: dl.url, q: '', relay: dl.relay, ref: dl.ref, name: sv.name, sq: sv.q }]; } }
       catch (e) { rep.push(h + ' dood: ' + (e && e.message)); }
@@ -544,23 +583,33 @@
       var aTitle = ad !== doc ? h1Of(ad) : '';
       return {
         title: item.title || pageTitle, series: cleanSeries(aTitle || pageTitle || item.title) || undefined,
-        poster: metaOf(ad, 'og:image') || item.poster, desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
+        poster: posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image')), desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
         episodes: list
       };
     },
 
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
+      var lc = LC[page]; if (lc && Date.now() - lc.t < 240000) return lc.v;
       var html = await getHtml(page), doc = parse(html);
       var servers = collectServers(doc, html, page);
-      servers.sort(function (a, b) { return serverRank(a.url, a.name) - serverRank(b.url, b.name); });
+      function rk(x) { return serverRank(x.url, x.name) - (PREF && host(x.url) === PREF ? 50 : 0); }
+      servers.sort(function (a, b) { return rk(a) - rk(b); });
       try { MediaHub.note('anime4up v3 list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}
-      var links = [], tried = 0, good0 = 0;
-      for (var i = 0; i < servers.length && tried < 12 && good0 < 4; i++) {
-        tried++;
-        var got = await extractServer(servers[i], page, rep);
-        got.forEach(function (g) { if (links.length < 8) { links.push(g); if (!/mp4upload/.test(host(servers[i].url))) good0++; } });
+      var links = [], seenL0 = {};
+      var live = servers.filter(function (x) { return !/mega\.nz|mega\.io/.test(host(x.url)); });
+      var firstB = live.filter(function (x) { return !/mp4upload/.test(host(x.url)); }).slice(0, 8);
+      var lastB = live.filter(function (x) { return /mp4upload/.test(host(x.url)); }).slice(0, 2);
+      async function runBatch(list) {                  // all servers of a batch are opened at the same time
+        var res = await Promise.all(list.map(function (sv) {
+          return withTimeout(extractServer(sv, page, rep), 15000).then(function (got) {
+            return got.map(function (g) { g.srv = host(sv.url); return g; });
+          }, function (e) { rep.push(host(sv.url).slice(0, 12) + ' ' + String((e && e.message) || e).slice(0, 24)); return []; });
+        }));
+        res.forEach(function (arr) { arr.forEach(function (g) { if (links.length < 8 && !seenL0[g.url]) { seenL0[g.url] = 1; links.push(g); } }); });
       }
+      await runBatch(firstB);
+      if (!links.length && lastB.length) await runBatch(lastB);   // mp4upload rarely works on the TV: last resort only
       // mp4upload needs a Referer and a non-standard port, so it fails on the TV and through the relay: only keep it when nothing else worked
       if (links.some(function (l) { return !/mp4upload/i.test(host(l.url)) && !/mp4upload/i.test(l.name || '') && !/mp4upload/i.test(l.ref || ''); })) {
         links = links.filter(function (l) { return !/mp4upload/i.test(l.name || '') && !/mp4upload/i.test(l.ref || ''); });
@@ -571,31 +620,19 @@
         var good = links.filter(function (l, i2) { return oks[i2]; });
         if (good.length) links = good;
       }
-      if (!links.length) {
-        var dat = {}; [].forEach.call(doc.querySelectorAll('*'), function (el) { if (el.attributes) for (var j = 0; j < el.attributes.length; j++) if (/^data-/.test(el.attributes[j].name)) dat[el.attributes[j].name] = 1; });
-        var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { var uu = new URL(x.url); pu = (uu.pathname + uu.search + uu.hash).slice(0, 18); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
-        try {                                            // show the page text around the server data, to see where the real ids are
-          var allT = (unent(html) + hiddenText(unent(html))).replace(/\\\//g, '/'), keys = ['share4max'];
-          var v0 = servers.filter(function (x) { return /voe\.sx/.test(host(x.url)); })[0];
-          if (v0) { var sg = v0.url.split(/[?#]/)[0].split('/').filter(Boolean).pop(); if (sg && sg.length > 6) keys.unshift(sg); }
-          keys.forEach(function (kw, ki) {
-            var at = allT.indexOf(kw), cnt = allT.split(kw).length - 1;
-            MediaHub.note('anime4up ctx' + (ki + 1) + ' x' + cnt, at < 0 ? 'not found: ' + kw : allT.slice(Math.max(0, at - 220), at + 280).replace(/\s+/g, ' '));
-          });
-        } catch (e) {}
-        var btn = '';
-        try {
-          var cand = [].filter.call(doc.querySelectorAll('a,button,li,span,div'), function (el) { var t = clean(el.textContent); return t.length < 40 && /megamax|anime4up\s*\d/i.test(t); });
-          var el0 = cand.filter(function (el) { return !el.querySelector('a,button,li,div'); })[0] || cand[cand.length - 1];
-          if (el0) btn = el0.outerHTML.replace(/\s+/g, ' ').replace(/(class|style)="[^"]*"/g, '').slice(0, 170);
-          var ax = doc.querySelector('[data-ajax-url]'); if (ax) btn += ' AJAX=' + String(ax.getAttribute('data-ajax-url')).slice(0, 40);
-        } catch (e) {}
-        throw new Error('v6 BTN ' + (btn || 'none') + ' | ' + rep.join('; ') + ' | servers ' + servers.length + ': ' + (lst.join(' ; ') || 'only mega'));
-      }
-      return links.map(function (l, n) {
-        var nm = (l.name || host(l.url).split('.').slice(-2, -1)[0] || 'Server') + (l.sq ? ' ' + l.sq : '') + (l.q ? ' ' + l.q : '');
-        return { url: l.url, label: nm.trim() + ' \u00B7 ' + host(l.url).split('.').slice(-2).join('.'), referer: l.ref || page, relay: !!l.relay };
+      if (!links.length) throw new Error('No working server for this episode (' + servers.length + ' found) | ' + rep.join('; ').slice(0, 320));
+      var seenLab = {};
+      var outL = links.map(function (l) {
+        var nm0 = String(l.name || '').replace(/\s*متعدد.*$/, '').trim();
+        var nm = (nm0 || host(l.url).split('.').slice(-2, -1)[0] || 'Server') + (l.sq ? ' ' + l.sq : '') + (l.q ? ' ' + l.q : '');
+        var lab = nm.trim() + ' \u00B7 ' + host(l.url).split('.').slice(-2).join('.');
+        seenLab[lab] = (seenLab[lab] || 0) + 1; if (seenLab[lab] > 1) lab += ' #' + seenLab[lab];
+        return { url: l.url, label: lab, referer: l.ref || page, relay: !!l.relay };
       });
+      try { if (links[0] && links[0].srv) { PREF = links[0].srv; localStorage.setItem('a4u_pref', PREF); } } catch (e) {}
+      var lk = Object.keys(LC); if (lk.length > 30) LC = {};
+      LC[page] = { t: Date.now(), v: outL };
+      return outL;
     }
   });
 })();

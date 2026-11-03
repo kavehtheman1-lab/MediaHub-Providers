@@ -336,7 +336,8 @@
     if (!/^https?:\/\//i.test(base)) throw new Error('pass_md5 gave "' + base.slice(0, 30) + '"');
     var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', rnd = '';
     for (var i = 0; i < 10; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length));
-    return { url: base + rnd + '?token=' + tk + '&expiry=' + Date.now(), relay: !!MediaHub.proxy, ref: origin + '/' };
+    // the trailing random part is ignored by the CDN; '.mp4' on it lets the app pick the mp4 path (play.mp4) instead of treating it as HLS
+    return { url: base + rnd + '.mp4?token=' + tk + '&expiry=' + Date.now(), relay: !!MediaHub.proxy, ref: origin + '/' };
   }
   // ---------- VOE (best effort: the page hides the playlist in an encoded JSON blob) ----------
   function voeSource(txt) {

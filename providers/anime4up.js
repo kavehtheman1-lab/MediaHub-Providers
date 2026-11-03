@@ -574,13 +574,13 @@
         var dat = {}; [].forEach.call(doc.querySelectorAll('*'), function (el) { if (el.attributes) for (var j = 0; j < el.attributes.length; j++) if (/^data-/.test(el.attributes[j].name)) dat[el.attributes[j].name] = 1; });
         var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { var uu = new URL(x.url); pu = (uu.pathname + uu.search + uu.hash).slice(0, 18); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
         try {                                            // show the page text around the server data, to see where the real ids are
-          var allT = (unent(html) + hiddenText(unent(html))).replace(/\\\//g, '/'), mc, nc = 0, lastI = -999;
-          var reC = /share4max\.com|"?servers?"?\s*[:=]\s*[\[{]|anime4up1|ajax/gi;
-          while ((mc = reC.exec(allT)) && nc < 3) {
-            if (mc.index - lastI < 400) continue;
-            lastI = mc.index; nc++;
-            MediaHub.note('anime4up ctx' + nc, allT.slice(Math.max(0, mc.index - 70), mc.index + 150).replace(/\s+/g, ' '));
-          }
+          var allT = (unent(html) + hiddenText(unent(html))).replace(/\\\//g, '/'), keys = ['share4max'];
+          var v0 = servers.filter(function (x) { return /voe\.sx/.test(host(x.url)); })[0];
+          if (v0) { var sg = v0.url.split(/[?#]/)[0].split('/').filter(Boolean).pop(); if (sg && sg.length > 6) keys.unshift(sg); }
+          keys.forEach(function (kw, ki) {
+            var at = allT.indexOf(kw), cnt = allT.split(kw).length - 1;
+            MediaHub.note('anime4up ctx' + (ki + 1) + ' x' + cnt, at < 0 ? 'not found: ' + kw : allT.slice(Math.max(0, at - 220), at + 280).replace(/\s+/g, ' '));
+          });
         } catch (e) {}
         var btn = '';
         try {

@@ -22,7 +22,19 @@
   function dec(u) { try { return decodeURIComponent(u); } catch (e) { return u; } }
   function latin(d) { return String(d).replace(/[\u0660-\u0669]/g, function (c) { return c.charCodeAt(0) - 0x660; }); }
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
-  function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
+  // The address typed in Settings can be a redirector (it may forward to another domain), so the site's own
+  // domain is learned from the page (canonical link) and links to it count as "same site".
+  var SITES = {};
+  function reg(h) { return String(h).split('.').slice(-2).join('.'); }
+  function same(h, h0) { return !!h && (h === h0 || reg(h) === reg(h0) || !!SITES[h] || !!SITES[reg(h)]); }
+  function parse(html) {
+    var d = new DOMParser().parseFromString(html, 'text/html');
+    try {
+      var c = d.querySelector('link[rel="canonical"]'), m = d.querySelector('meta[property="og:url"]'), u = (c && c.getAttribute('href')) || (m && m.getAttribute('content')) || '';
+      if (u) { var hh = host(u); if (hh) { SITES[hh] = 1; SITES[reg(hh)] = 1; } }
+    } catch (e) {}
+    return d;
+  }
   async function getHtml(url) {
     // with a relay set, ask it first (it sends a browser User-Agent); the TV's own request is the fallback
     if (MediaHub.proxy) {
@@ -132,7 +144,7 @@
         return;
       }
       var href = abs(n.getAttribute('href'), base);
-      if (!href || host(href) !== h0 || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/') return;
+      if (!href || !same(host(href), h0) || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/') return;
       if (!hasPic(n)) return;
       var title = titleOf(n);
       if (!title || title.length > 140 || seen[href]) return;
@@ -145,7 +157,7 @@
   function nextLink(d, u, h0) {
     var a = d.querySelector('link[rel="next"],a[rel="next"],a.next,a.page-numbers.next,.pagination a.next');
     var h = a ? abs(a.getAttribute('href'), u) : '';
-    return h && h !== u && host(h) === h0 ? h : '';
+    return h && h !== u && same(host(h), h0) ? h : '';
   }
 
   // ---------- episodes & details ----------
@@ -153,11 +165,11 @@
     var out = [], words = slugOf(u).slice(0, 2);
     [].forEach.call(d.querySelectorAll('ul.all-episodes-list li a[href], .anime-external-links a.anime-first-ep[href]'), function (a) {
       var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
-      if (href && href !== u && host(href) === h0 && !/#$/.test(href)) out.push({ href: href, t: /^[\d\u0660-\u0669]{1,4}$/.test(t) ? 'الحلقة ' + latin(t) : t });
+      if (href && href !== u && same(host(href), h0) && !/#$/.test(href)) out.push({ href: href, t: /^[\d\u0660-\u0669]{1,4}$/.test(t) ? 'الحلقة ' + latin(t) : t });
     });
     [].forEach.call(d.querySelectorAll('a[href]'), function (a) {
       var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
-      if (!href || href === u || host(href) !== h0) return;
+      if (!href || href === u || !same(host(href), h0)) return;
       var dh = dec(href).toLowerCase(), isNum = /^[\d\u0660-\u0669]{1,4}$/.test(t);
       if (SKIPPATH.test(href) || /#$/.test(href)) return;
       if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
@@ -179,7 +191,7 @@
     var best = '';
     [].forEach.call(d.querySelectorAll('a[href*="/anime/"],[class*="breadcrumb"] a[href]'), function (a) {
       var href = abs(a.getAttribute('href'), url), pth = ''; try { pth = new URL(href).pathname; } catch (e) {}
-      if (!href || href === url || host(href) !== h0 || pth.length < 4 || /\/episode\//i.test(pth) || /الحلقة/.test(dec(pth)) || SKIPPATH.test(href)) return;
+      if (!href || href === url || !same(host(href), h0) || pth.length < 4 || /\/episode\//i.test(pth) || /الحلقة/.test(dec(pth)) || SKIPPATH.test(href)) return;
       if (!best || /\/anime\//i.test(pth)) best = href;
     });
     return best;
@@ -382,7 +394,7 @@
       addAll(await collectEps(aurl, h0, ad));
       if (!list.length) {   // the page keeps its data as JSON inside script[data-page]
         var raw = unent((ad.documentElement && ad.documentElement.outerHTML) || '').replace(/\\\//g, '/'), mm = raw.match(/https?:\/\/[^"'\s<>\\]+\/episode\/[^"'\s<>\\]+/g) || [];
-        addAll(mm.filter(function (x) { return host(x) === h0; }).map(function (x) { return { href: x, t: '' }; }));
+        addAll(mm.filter(function (x) { return same(host(x), h0); }).map(function (x) { return { href: x, t: '' }; }));
       }
       if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, ref: aurl, n: epNum(dec(url) + ' ' + pageTitle) }); } }
       list = list.map(function (e, i) { e.k = i; return e; });

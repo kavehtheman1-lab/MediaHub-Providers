@@ -10,7 +10,7 @@
   var LABELS = 'الاستوديو|المصدر|الحلقات|الموسم|السنة|المدة|البلد|التصنيف العمري|التصنيف|النوع|الحالة|العرض|بداية العرض|نهاية العرض|studio|source|episodes|season|year|duration|country|rating|status|type';
 
   var SITE = '';
-  var CARD_SEL = 'li.movieItem', TITLE_SEL = 'div.singleTitle em', POSTER_SEL = 'div.single-thumbnail img', SEASON_SEL = '/season/', POST_VIEW = true, SLUG_LAST = false;
+  var CARD_SEL = 'li.movieItem', TITLE_SEL = 'div.singleTitle em', POSTER_SEL = 'div.single-thumbnail img', SEASON_SEL = '/season/', WATCH_PAGE = true, SLUG_LAST = false;
   var SELF = new RegExp('https?://(?:[a-z0-9-]+\\.)?egydead\\.[a-z]{2,10}(?![a-z0-9.-]*[a-z0-9])', 'gi');
   // ---------- small helpers ----------
   function baseOf(cfg) {
@@ -28,7 +28,7 @@
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
   var REAL = '';
-  var HC = {}, HCN = 0, LC = {}, PREF = '';
+  var HC = {}, HCN = 0, LC = {}, PREF = '', dumped = {};
   try { PREF = localStorage.getItem('egydead_pref') || ''; } catch (e) {}
   function withTimeout(p, ms) {
     return new Promise(function (res, rej) {
@@ -120,20 +120,21 @@
   var ORD = { 'الاولى': 1, 'الأولى': 1, 'الثانية': 2, 'الثالثة': 3, 'الرابعة': 4, 'الخامسة': 5, 'السادسة': 6, 'السابعة': 7, 'الثامنة': 8, 'التاسعة': 9, 'العاشرة': 10 };
   function epNum(t) {
     t = latin(t);
-    var m = t.match(/(?:الحلقة|حلقة|episode|\bep)[\s\-_.:]*0*(\d+)/i); if (m) return +m[1];
+    var m = t.match(/(?:الحلقة|حلقة|حلقه|episode|\bep)[\s\-_.:]*0*(\d+)/i); if (m) return +m[1];
+    m = t.match(/[-_\/]s\d{1,2}e0*(\d{1,4})/i) || t.match(/[-_\/]e0*(\d{1,4})(?=[-_\/\s]|$)/i); if (m) return +m[1];
     for (var k in ORD) if (t.indexOf(k) >= 0) return ORD[k];
     m = t.match(/\/(\d{1,4})\/?(?=\s|$)/); if (m) return +m[1];
     return 0;
   }
   function cleanSeries(t) {
-    return clean(String(t).replace(/^\s*(?:انمي|أنمي|مسلسل|فيلم)\s+/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*مترجم[ةه]?\s*$/i, ''));
+    return clean(String(t).replace(/^\s*(?:(?:تحميل|مشاهدة|انمي|أنمي|مسلسل|فيلم|برنامج)\s+)+/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*(?:برابط|بروابط).*$/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?)\s*(?:كامل[ةه]?)?\s*$/i, ''));
   }
   // words that identify an anime in a URL
   function slugOf(u) {
     if (SLUG_LAST) { try { var ls = new URL(u).pathname.split('/').filter(Boolean).pop() || ''; return latin(dec(ls)).toLowerCase().split('-').filter(function (w) { return w.length > 1; }).slice(0, 3); } catch (e) {} }
     var segs = []; try { segs = new URL(u).pathname.split('/').filter(Boolean); } catch (e) {}
     var seg = '';
-    for (var i = 0; i < segs.length; i++) if (!/^(episode|episodes|anime|watch|series|movie|animes)$/i.test(segs[i])) { seg = segs[i]; break; }
+    for (var i = 0; i < segs.length; i++) if (!/^(episodes?|anime|watch|series?|serie|seasons?|titles?|movies?|animes)$/i.test(segs[i])) { seg = segs[i]; break; }
     seg = latin(dec(seg)).toLowerCase().replace(/(?:-?الحلقة[-_]?\d+|-?episode[-_]?\d+|-?ep[-_]?\d+)/g, '');
     return seg.split('-').filter(function (w) { return w.length > 1 && !/^(مترجم|مترجمة|انمي|أنمي|anime)$/.test(w); }).slice(0, 3);
   }
@@ -146,13 +147,17 @@
     return false;
   }
   function picOf(a, base) {
-    var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img')), u = '';
-    if (img) u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
-    if (!u || /^data:/.test(u)) {
-      var el = a.querySelector('[style*="url("]') || (/url\(/.test(a.getAttribute('style') || '') ? a : null), st = el ? el.getAttribute('style') : '', m = st && st.match(/url\(["']?([^"')]+)/);
-      if (m) u = m[1];
+    var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img')), u = img ? imgUrl(img, base) : '';
+    if (!u) {
+      var pp = a, k = 0, el;
+      for (; pp && k < 3 && !u; pp = pp.parentElement, k++) {
+        if (pp !== a && pp.querySelectorAll('a[href]').length > 4) break;
+        el = (bgOf(pp) ? pp : null) || pp.querySelector('[style*="url("],[data-bg],[data-background]');
+        if (el) u = bgOf(el);
+      }
+      if (u) u = abs(u, base);
     }
-    return u && !/^data:/.test(u) ? abs(u, base) : '';
+    return u && !/^data:/.test(u) ? u : '';
   }
   function titleOf(a) {
     var img = a.querySelector('img'), h = a.querySelector('h1,h2,h3,h4,h5,.title,.Title') || (a.parentElement && a.parentElement.querySelector('h1,h2,h3,h4,h5'));
@@ -182,31 +187,79 @@
   }
 
   // Anime4up cards: the title is an <h3><a href=anime page>, the poster <img> sits in a sibling element of the same card.
+  function bgOf(el) {
+    if (!el || !el.getAttribute) return '';
+    var st = el.getAttribute('style') || '', m = st.match(/url\(["']?([^"')]+)/);
+    return m ? m[1] : (el.getAttribute('data-bg') || el.getAttribute('data-background') || el.getAttribute('data-image') || '');
+  }
   function imgUrl(img, base) {
     if (!img) return '';
-    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy') || img.getAttribute('src') || '';
     if (/^data:/.test(u)) u = '';
     if (!u) { var ss = img.getAttribute('data-srcset') || img.getAttribute('srcset') || ''; u = (ss.split(',')[0] || '').trim().split(/\s+/)[0]; }
-    return u ? abs(u, base) : '';
+    if (!u) u = bgOf(img);
+    return u && !/^data:/.test(u) ? abs(u, base) : '';
   }
   function tidy(t) {
     return clean(String(t).replace(/^\s*(?:مشاهدة|تحميل|مشاهده)?\s*(?:فيلم|مسلسل|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?|اون لاين|أون لاين|كامل[ةه]?|بجودة.*|HD)\s*$/i, ''));
   }
   function cardsSel(doc, base) {
-    var items = [], seen = {}, h0 = host(base);
-    [].forEach.call(doc.querySelectorAll(CARD_SEL), function (li) {
-      var a = li.tagName === 'A' ? li : li.querySelector('a[href]'); if (!a) return;
+    var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
+    groups.push(cur);
+    [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,h4,' + CARD_SEL), function (n) {
+      if (/^H\d$/.test(n.tagName)) {
+        if (n.closest && (n.closest(CARD_SEL) || n.closest('a'))) return;
+        var t = clean(n.textContent);
+        if (t && t.length < 40) { if (cur.items.length) { cur = { title: t, items: [] }; groups.push(cur); } else cur.title = t; }
+        return;
+      }
+      var a = n.tagName === 'A' ? n : n.querySelector('a[href]'); if (!a) return;
       var href = abs(a.getAttribute('href'), base);
-      if (!href || host(href) !== h0 || seen[href] || /#$/.test(href)) return;
-      var img = li.querySelector('img'), t = li.querySelector('h1,h2,h3,h4,h5,.title,.BottomTitle');
-      var title = tidy((t && t.textContent) || a.getAttribute('title') || (img && img.getAttribute('alt')) || '');
+      if (!href || host(href) !== h0 || seen[href] || /#$/.test(href) || href === base + '/') return;
+      var img = n.querySelector('img'), poster = picOf(a, base);
+      if (!img && !poster) return;                       // menu and page-number items have no picture
+      var title = tidy(a.getAttribute('title') || (n.querySelector('h1,h2,h3,h4,h5') || {}).textContent || (img && img.getAttribute('alt')) || '');
       if (!title || title.length > 140) return;
-      seen[href] = 1; items.push({ id: href, url: href, title: title, poster: imgUrl(img, base) });
+      seen[href] = 1; cur.items.push({ id: href, url: href, title: title, poster: poster });
     });
-    return items;
+    return groups.filter(function (g) { return g.items.length; });
+  }
+  var SORD = { 'الاول': 1, 'الأول': 1, 'الثاني': 2, 'الثانى': 2, 'الثالث': 3, 'الرابع': 4, 'الخامس': 5, 'السادس': 6, 'السابع': 7, 'الثامن': 8, 'التاسع': 9, 'العاشر': 10 };
+  function seasonNo(t) {
+    var m = latin(t).match(/(?:الموسم|الجزء|season|\bs)\s*0*(\d{1,2})\b/i); if (m) return +m[1];
+    m = clean(t).match(/(?:الموسم|الجزء)\s+(\S+)/); return m && SORD[m[1]] ? SORD[m[1]] : 0;
+  }
+  // the "مواسم المسلسل" list of a season page
+  function seasonLinks(d, base, h0) {
+    var out = [], seen = {}, stopRe = /ذات صل|مشابه|شاهد|احدث|المضاف/;
+    [].forEach.call(d.querySelectorAll('h1,h2,h3,h4'), function (h) {
+      var ht0 = clean(h.textContent);
+      if (out.length || !/مواسم/.test(ht0) || stopRe.test(ht0)) return;
+      var n = h, up = 0, found = false;
+      for (; n && up < 3 && !found; n = n.parentElement, up++) {
+        for (var s = n.nextElementSibling; s; s = s.nextElementSibling) {
+          if (/^H[1-4]$/.test(s.tagName)) break;
+          var hh = s.querySelector && s.querySelector('h1,h2,h3,h4');
+          if (hh && stopRe.test(clean(hh.textContent))) break;
+          var as = s.tagName === 'A' ? [s] : [].slice.call(s.querySelectorAll('a[href*="/seasons/"]'));
+          as.forEach(function (a) {
+            var href = abs(a.getAttribute('href'), base);
+            if (!href || seen[href] || host(href) !== h0 || !/\/seasons\//i.test(href)) return;
+            seen[href] = 1; found = true; out.push({ url: href, title: clean(a.getAttribute('title') || a.textContent) });
+          });
+        }
+      }
+    });
+    out.reverse();                                       // the site lists the newest season first
+    var nums = out.map(function (x) { return seasonNo(x.title); });
+    if (out.length > 1 && nums.every(function (x) { return x > 0; })) out = out.map(function (x, i) { x.n = nums[i]; return x; }).sort(function (a, b) { return a.n - b.n; });
+    return out.map(function (x, i) {
+      var m = clean(x.title).match(/(?:الموسم|الجزء)\s+\S+/), lab = m ? m[0] : tidy(x.title).replace(/\s*(?:كامل|مترجم).*$/i, '').slice(0, 28);
+      return { k: String(i + 1), label: lab || ('Season ' + (i + 1)), url: x.url };
+    });
   }
   function cards(doc, base) {
-    if (CARD_SEL) { var cs = cardsSel(doc, base); if (cs.length) return [{ title: 'Latest', items: cs }]; }
+    if (CARD_SEL) { var cs = cardsSel(doc, base); if (cs.length) return cs; }
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
     [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,h4'), function (h) {
@@ -246,8 +299,8 @@
       if (!href || href === u || host(href) !== h0) return;
       var dh = dec(href).toLowerCase(), isNum = /^[\d\u0660-\u0669]{1,4}$/.test(t);
       if (SKIPPATH.test(href) || /#$/.test(href)) return;
-      if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
-      if (/\/episode\/|الحلقة|حلقة|[-_/]ep-?\d+/i.test(dh) || /(?:الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t) || (isNum && /episode/i.test(dh))) out.push({ href: href, t: isNum ? 'الحلقة ' + latin(t) : t });
+      if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|حلقه|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
+      if (/\/episodes?\/|الحلقة|حلقة|[-_/]ep-?\d+/i.test(dh) || /(?:الحلقة|حلقة|حلقه|episode)\s*[\d\u0660-\u0669]+/i.test(t) || (isNum && /episode/i.test(dh))) out.push({ href: href, t: isNum ? 'الحلقة ' + latin(t) : t });
     });
     return out;
   }
@@ -263,10 +316,10 @@
   }
   function animePageLink(d, url, h0) {
     var best = '';
-    [].forEach.call(d.querySelectorAll('a[href*="/anime/"],a[href*="/titles/"],[class*="breadcrumb"] a[href]'), function (a) {
+    [].forEach.call(d.querySelectorAll('a[href*="/seasons/"],a[href*="/Series/"]'), function (a) {
       var href = abs(a.getAttribute('href'), url), pth = ''; try { pth = new URL(href).pathname; } catch (e) {}
       if (!href || href === url || host(href) !== h0 || pth.length < 4 || /\/episode\//i.test(pth) || /الحلقة/.test(dec(pth)) || SKIPPATH.test(href)) return;
-      if (!best || /\/(?:anime|titles)\//i.test(pth)) best = href;
+      if (!best) best = href;
     });
     return best;
   }
@@ -519,6 +572,14 @@
         }
       }
     }
+    if (!found.length && txt.length >= 200 && !dumped[h]) {
+      dumped[h] = 1;
+      try {
+        var dp = unent(txt), dk = dp.search(/video_sources|["']sources["']|m3u8|\.mp4|fetch\(|\/api\/|token/i), dsr = [];
+        dp.replace(/<script[^>]*\ssrc=["']([^"']+)/gi, function (m0, s0) { dsr.push(s0.replace(/^https?:\/\//, '').slice(0, 40)); return m0; });
+        MediaHub.note('egydead page ' + h.slice(0, 14), (dk >= 0 ? dp.slice(Math.max(0, dk - 70), dk + 280) : dp.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/\s+/g, ' ').slice(0, 300)).replace(/\s+/g, ' ') + ' | scripts: ' + dsr.slice(0, 4).join(' , '));
+      } catch (e) {}
+    }
     rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + (txt.length < 200 ? ' "' + txt.replace(/\s+/g, ' ').slice(0, 40) + '"' : '') + ' -> ' + found.length);
     return found.map(function (f) { return { url: f.url, q: f.q, relay: r.relay, ref: /ok\.ru/.test(h) ? 'https://ok.ru/' : sv.url, name: sv.name, sq: sv.q }; });
   }
@@ -547,6 +608,15 @@
         var t = (html.match(/<title[^>]*>([^<]*)/i) || [])[1] || '';
         throw new Error('No titles found at ' + base + ' - page "' + clean(t).slice(0, 50) + '", ' + html.length + ' chars' + (/just a moment|challenge-platform/i.test(html) ? ' [Cloudflare check]' : ''));
       }
+      try {
+        var anyPic = g.some(function (x) { return x.items.some(function (i) { return i.poster; }); });
+        if (!anyPic && g[0] && g[0].items[0]) {
+          var f0 = g[0].items[0].url, d0 = parse(html), hit = null;
+          [].forEach.call(d0.querySelectorAll('a[href]'), function (a) { if (!hit && abs(a.getAttribute('href'), base) === f0) hit = a; });
+          var hp = hit && (hit.parentElement || hit);
+          MediaHub.note('egydead card', 'no pictures found; ' + (hp ? hp.outerHTML.replace(/\s+/g, ' ').slice(0, 380) : 'card not located'));
+        }
+      } catch (e) {}
       return g.slice(0, 14);
     },
 
@@ -578,7 +648,8 @@
             var nx = nextLink(dS, uS, host(base)); if (!nx || nx === uS) break;
             try { var h2 = await getHtml(nx), extra2 = searchCards(h2, base), added = 0; extra2.forEach(function (x) { if (!seenS[x.id]) { seenS[x.id] = 1; out.push(x); added++; } }); if (!added) break; dS = parse(h2); uS = nx; } catch (e) { break; }
           }
-          return out;
+          var onlyT = out.filter(function (x) { return !/\/episodes?\//i.test(x.url); });
+          return onlyT.length ? onlyT : out;
         } catch (e) { last = (e && e.message) + ' ' + urls[ui].replace(base, '').slice(0, 30); }
       }
       throw new Error('Search found nothing (' + tried.length + ' addresses tried; last: ' + last + ')');
@@ -586,7 +657,7 @@
 
     load: async function (cfg, item) {
       var base = baseOf(cfg), url = item.url || item.id, h0 = host(base), doc = parse(await getHtml(url));
-      var pageTitle = h1Of(doc) || item.title, isEp = /\/episode\/|الحلقة|حلقة/i.test(dec(url));
+      var pageTitle = h1Of(doc) || item.title, isEp = /\/episodes?\/|الحلقة|حلقة|حلقه/i.test(dec(url));
       var animeUrl = isEp ? animePageLink(doc, url, h0) : url, ad = doc, aurl = url;
       if (isEp && animeUrl) { try { ad = parse(await getHtml(animeUrl)); aurl = animeUrl; } catch (e) { ad = doc; aurl = url; } }
       var seen = {}, list = [];
@@ -595,11 +666,7 @@
       if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, n: epNum(dec(url) + ' ' + pageTitle) }); } }
       var seasons = [], curK = '';
       if (SEASON_SEL) {
-        var sSeen = {};
-        [].forEach.call(ad.querySelectorAll('a[href*="' + SEASON_SEL + '"]'), function (a) {
-          var sh = abs(a.getAttribute('href'), aurl); if (!sh || sSeen[sh] || host(sh) !== h0) return; sSeen[sh] = 1;
-          var sn = seasons.length + 1; seasons.push({ k: String(sn), label: clean(a.textContent).slice(0, 30) || ('Season ' + sn), url: sh });
-        });
+        seasons = seasonLinks(ad, aurl, h0);
         seasons.forEach(function (sx) { if (sx.url === aurl || sx.url === url) curK = sx.k; });
         if (!list.length && seasons.length) {              // a series page that only lists its seasons: open the first one
           curK = seasons[0].k;
@@ -644,14 +711,19 @@
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
       var lc = LC[page]; if (lc && Date.now() - lc.t < 240000) return lc.v;
       var html = await getHtml(page);
-      if (POST_VIEW) {
-        try {
-          var ph = await MediaHub.getText(page, { method: 'POST', body: 'View=1', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, referer: page });
-          html = (SITE ? ph.replace(SELF, SITE) : ph) + '\n' + html; rep.push('post ' + ph.length);
-        } catch (e) { rep.push('post ' + String((e && e.message) || e).slice(0, 40)); }
+      if (WATCH_PAGE && !/\/watch\/?$/i.test(page)) {         // EgyDead keeps the servers on the /watch/ page of a title
+        var wu = '';
+        try { [].forEach.call(parse(html).querySelectorAll('a[href*="/watch"]'), function (a) { if (!wu && /مشاهد/.test(a.textContent)) wu = abs(a.getAttribute('href'), page); }); } catch (e) {}
+        if (!wu) wu = page.replace(/[?#].*$/, '').replace(/\/?$/, '/') + 'watch/';
+        try { var wh = await getHtml(wu); html = wh + '\n' + html; rep.push('watch ' + wh.length); }
+        catch (e) { rep.push('watch ' + String((e && e.message) || e).slice(0, 40)); }
       }
       var doc = parse(html);
       var servers = collectServers(doc, html, page);
+      if (WATCH_PAGE) {                                    // the download button carries the id of the MegaMax player
+        var dmm = html.match(/https?:\/\/[^"'\s<>]+?\/download\/([A-Za-z0-9_-]{6,})/);
+        if (dmm) { var eu = dmm[0].split('/download/')[0] + '/e/' + dmm[1]; if (!servers.some(function (x) { return x.url === eu; })) servers.push({ url: eu, name: 'megamax', q: '' }); }
+      }
       function rk(x) { return serverRank(x.url, x.name) - (PREF && host(x.url) === PREF ? 50 : 0); }
       servers.sort(function (a, b) { return rk(a) - rk(b); });
       try { MediaHub.note('egydead list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}

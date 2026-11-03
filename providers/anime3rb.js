@@ -27,7 +27,7 @@
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
   var REAL = '';
-  var HC = {}, HCN = 0, LC = {}, PREF = '';
+  var HC = {}, HCN = 0, LC = {}, PREF = '', dumped = {};
   try { PREF = localStorage.getItem('anime3rb_pref') || ''; } catch (e) {}
   function withTimeout(p, ms) {
     return new Promise(function (res, rej) {
@@ -119,20 +119,21 @@
   var ORD = { 'الاولى': 1, 'الأولى': 1, 'الثانية': 2, 'الثالثة': 3, 'الرابعة': 4, 'الخامسة': 5, 'السادسة': 6, 'السابعة': 7, 'الثامنة': 8, 'التاسعة': 9, 'العاشرة': 10 };
   function epNum(t) {
     t = latin(t);
-    var m = t.match(/(?:الحلقة|حلقة|episode|\bep)[\s\-_.:]*0*(\d+)/i); if (m) return +m[1];
+    var m = t.match(/(?:الحلقة|حلقة|حلقه|episode|\bep)[\s\-_.:]*0*(\d+)/i); if (m) return +m[1];
+    m = t.match(/[-_\/]s\d{1,2}e0*(\d{1,4})/i) || t.match(/[-_\/]e0*(\d{1,4})(?=[-_\/\s]|$)/i); if (m) return +m[1];
     for (var k in ORD) if (t.indexOf(k) >= 0) return ORD[k];
     m = t.match(/\/(\d{1,4})\/?(?=\s|$)/); if (m) return +m[1];
     return 0;
   }
   function cleanSeries(t) {
-    return clean(String(t).replace(/^\s*(?:انمي|أنمي|مسلسل|فيلم)\s+/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*مترجم[ةه]?\s*$/i, ''));
+    return clean(String(t).replace(/^\s*(?:(?:تحميل|مشاهدة|انمي|أنمي|مسلسل|فيلم|برنامج)\s+)+/i, '').replace(/\s*(?:الحلقة|حلقة|episode)\s*\S+.*$/i, '').replace(/\s*(?:برابط|بروابط).*$/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?)\s*(?:كامل[ةه]?)?\s*$/i, ''));
   }
   // words that identify an anime in a URL
   function slugOf(u) {
     if (SLUG_LAST) { try { var ls = new URL(u).pathname.split('/').filter(Boolean).pop() || ''; return latin(dec(ls)).toLowerCase().split('-').filter(function (w) { return w.length > 1; }).slice(0, 3); } catch (e) {} }
     var segs = []; try { segs = new URL(u).pathname.split('/').filter(Boolean); } catch (e) {}
     var seg = '';
-    for (var i = 0; i < segs.length; i++) if (!/^(episode|episodes|anime|watch|series|movie|animes)$/i.test(segs[i])) { seg = segs[i]; break; }
+    for (var i = 0; i < segs.length; i++) if (!/^(episodes?|anime|watch|series?|serie|seasons?|titles?|movies?|animes)$/i.test(segs[i])) { seg = segs[i]; break; }
     seg = latin(dec(seg)).toLowerCase().replace(/(?:-?الحلقة[-_]?\d+|-?episode[-_]?\d+|-?ep[-_]?\d+)/g, '');
     return seg.split('-').filter(function (w) { return w.length > 1 && !/^(مترجم|مترجمة|انمي|أنمي|anime)$/.test(w); }).slice(0, 3);
   }
@@ -145,13 +146,17 @@
     return false;
   }
   function picOf(a, base) {
-    var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img')), u = '';
-    if (img) u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
-    if (!u || /^data:/.test(u)) {
-      var el = a.querySelector('[style*="url("]') || (/url\(/.test(a.getAttribute('style') || '') ? a : null), st = el ? el.getAttribute('style') : '', m = st && st.match(/url\(["']?([^"')]+)/);
-      if (m) u = m[1];
+    var img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img')), u = img ? imgUrl(img, base) : '';
+    if (!u) {
+      var pp = a, k = 0, el;
+      for (; pp && k < 3 && !u; pp = pp.parentElement, k++) {
+        if (pp !== a && pp.querySelectorAll('a[href]').length > 4) break;
+        el = (bgOf(pp) ? pp : null) || pp.querySelector('[style*="url("],[data-bg],[data-background]');
+        if (el) u = bgOf(el);
+      }
+      if (u) u = abs(u, base);
     }
-    return u && !/^data:/.test(u) ? abs(u, base) : '';
+    return u && !/^data:/.test(u) ? u : '';
   }
   function titleOf(a) {
     var img = a.querySelector('img'), h = a.querySelector('h1,h2,h3,h4,h5,.title,.Title') || (a.parentElement && a.parentElement.querySelector('h1,h2,h3,h4,h5'));
@@ -181,12 +186,18 @@
   }
 
   // Anime4up cards: the title is an <h3><a href=anime page>, the poster <img> sits in a sibling element of the same card.
+  function bgOf(el) {
+    if (!el || !el.getAttribute) return '';
+    var st = el.getAttribute('style') || '', m = st.match(/url\(["']?([^"')]+)/);
+    return m ? m[1] : (el.getAttribute('data-bg') || el.getAttribute('data-background') || el.getAttribute('data-image') || '');
+  }
   function imgUrl(img, base) {
     if (!img) return '';
-    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy') || img.getAttribute('src') || '';
     if (/^data:/.test(u)) u = '';
     if (!u) { var ss = img.getAttribute('data-srcset') || img.getAttribute('srcset') || ''; u = (ss.split(',')[0] || '').trim().split(/\s+/)[0]; }
-    return u ? abs(u, base) : '';
+    if (!u) u = bgOf(img);
+    return u && !/^data:/.test(u) ? abs(u, base) : '';
   }
   function tidy(t) {
     return clean(String(t).replace(/^\s*(?:مشاهدة|تحميل|مشاهده)?\s*(?:فيلم|مسلسل|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?|اون لاين|أون لاين|كامل[ةه]?|بجودة.*|HD)\s*$/i, ''));
@@ -205,7 +216,7 @@
     return items;
   }
   function cards(doc, base) {
-    if (CARD_SEL) { var cs = cardsSel(doc, base); if (cs.length) return [{ title: 'Latest', items: cs }]; }
+    if (CARD_SEL) { var cs = cardsSel(doc, base); if (cs.length) return cs; }
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
     [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,h4'), function (h) {
@@ -245,8 +256,8 @@
       if (!href || href === u || host(href) !== h0) return;
       var dh = dec(href).toLowerCase(), isNum = /^[\d\u0660-\u0669]{1,4}$/.test(t);
       if (SKIPPATH.test(href) || /#$/.test(href)) return;
-      if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
-      if (/\/episode\/|الحلقة|حلقة|[-_/]ep-?\d+/i.test(dh) || /(?:الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t) || (isNum && /episode/i.test(dh))) out.push({ href: href, t: isNum ? 'الحلقة ' + latin(t) : t });
+      if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|حلقه|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
+      if (/\/episodes?\/|الحلقة|حلقة|[-_/]ep-?\d+/i.test(dh) || /(?:الحلقة|حلقة|حلقه|episode)\s*[\d\u0660-\u0669]+/i.test(t) || (isNum && /episode/i.test(dh))) out.push({ href: href, t: isNum ? 'الحلقة ' + latin(t) : t });
     });
     return out;
   }
@@ -518,6 +529,14 @@
         }
       }
     }
+    if (!found.length && txt.length >= 200 && !dumped[h]) {
+      dumped[h] = 1;
+      try {
+        var dp = unent(txt), dk = dp.search(/video_sources|["']sources["']|m3u8|\.mp4|fetch\(|\/api\/|token/i), dsr = [];
+        dp.replace(/<script[^>]*\ssrc=["']([^"']+)/gi, function (m0, s0) { dsr.push(s0.replace(/^https?:\/\//, '').slice(0, 40)); return m0; });
+        MediaHub.note('anime3rb page ' + h.slice(0, 14), (dk >= 0 ? dp.slice(Math.max(0, dk - 70), dk + 280) : dp.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/\s+/g, ' ').slice(0, 300)).replace(/\s+/g, ' ') + ' | scripts: ' + dsr.slice(0, 4).join(' , '));
+      } catch (e) {}
+    }
     rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + (txt.length < 200 ? ' "' + txt.replace(/\s+/g, ' ').slice(0, 40) + '"' : '') + ' -> ' + found.length);
     return found.map(function (f) { return { url: f.url, q: f.q, relay: r.relay, ref: /ok\.ru/.test(h) ? 'https://ok.ru/' : sv.url, name: sv.name, sq: sv.q }; });
   }
@@ -546,6 +565,15 @@
         var t = (html.match(/<title[^>]*>([^<]*)/i) || [])[1] || '';
         throw new Error('No titles found at ' + base + ' - page "' + clean(t).slice(0, 50) + '", ' + html.length + ' chars' + (/just a moment|challenge-platform/i.test(html) ? ' [Cloudflare check]' : ''));
       }
+      try {
+        var anyPic = g.some(function (x) { return x.items.some(function (i) { return i.poster; }); });
+        if (!anyPic && g[0] && g[0].items[0]) {
+          var f0 = g[0].items[0].url, d0 = parse(html), hit = null;
+          [].forEach.call(d0.querySelectorAll('a[href]'), function (a) { if (!hit && abs(a.getAttribute('href'), base) === f0) hit = a; });
+          var hp = hit && (hit.parentElement || hit);
+          MediaHub.note('anime3rb card', 'no pictures found; ' + (hp ? hp.outerHTML.replace(/\s+/g, ' ').slice(0, 380) : 'card not located'));
+        }
+      } catch (e) {}
       return g.slice(0, 14);
     },
 
@@ -585,7 +613,7 @@
 
     load: async function (cfg, item) {
       var base = baseOf(cfg), url = item.url || item.id, h0 = host(base), doc = parse(await getHtml(url));
-      var pageTitle = h1Of(doc) || item.title, isEp = /\/episode\/|الحلقة|حلقة/i.test(dec(url));
+      var pageTitle = h1Of(doc) || item.title, isEp = /\/episodes?\/|الحلقة|حلقة|حلقه/i.test(dec(url));
       var animeUrl = isEp ? animePageLink(doc, url, h0) : url, ad = doc, aurl = url;
       if (isEp && animeUrl) { try { ad = parse(await getHtml(animeUrl)); aurl = animeUrl; } catch (e) { ad = doc; aurl = url; } }
       var seen = {}, list = [];

@@ -133,7 +133,28 @@
     if (!t) { t = clean(a.textContent).replace(/^(?:الحلقة\s*\d+\s*)+/, ''); }
     return t;
   }
+  // Anime4up's own markup first (card classes taken from the Cloudstream plugin), heuristics only as a fallback
   function cards(doc, base) {
+    var groups = [], byName = {}, seen = {}, h0 = host(base);
+    [].forEach.call(doc.querySelectorAll('.anime-card-themex, .themexblock, .anime-card-container'), function (c) {
+      if (c.parentElement && c.parentElement.closest && c.parentElement.closest('.anime-card-themex, .themexblock, .anime-card-container')) return;
+      var a = c.querySelector('.anime-card-title h3 a[href], h3 a[href], h2 a[href], a[href*="/anime/"]');
+      if (!a) return;
+      var href = abs(a.getAttribute('href'), base);
+      if (!href || !same(host(href), h0) || SKIPPATH.test(href) || seen[href]) return;
+      var title = clean(a.getAttribute('title') || a.textContent);
+      if (!title || title.length > 140) return;
+      var img = c.querySelector('.anime-thumbnail img, img'), pic = '';
+      if (img) pic = img.getAttribute('data-image') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || '';
+      if (!pic || /^data:/.test(pic)) pic = '';
+      seen[href] = 1;
+      var w = c.closest && c.closest('.main-widget'), hd = w && w.querySelector('.main-didget-head h3'), name = clean(hd && hd.textContent) || 'Anime4up';
+      if (!byName[name]) { byName[name] = { title: name, items: [] }; groups.push(byName[name]); }
+      byName[name].items.push({ id: href, url: href, title: title, poster: pic ? abs(pic, base) : '' });
+    });
+    return groups.length ? groups : cardsHeur(doc, base);
+  }
+  function cardsHeur(doc, base) {
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
     [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,a[href]'), function (n) {

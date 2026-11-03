@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 8,
+  "version": 9,
   "providers": [
     {
       "name": "Tuktukcima",
@@ -24,6 +24,30 @@
         "Anime",
         "TvSeries",
         "Movie"
+      ]
+    },
+    {
+      "name": "EgyDead",
+      "id": "egydead",
+      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/egydead.js",
+      "version": "0.1.0",
+      "language": "ar",
+      "types": [
+        "Movie",
+        "TvSeries",
+        "Anime",
+        "AsianDrama"
+      ]
+    },
+    {
+      "name": "Anime3rb",
+      "id": "anime3rb",
+      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/anime3rb.js",
+      "version": "0.1.0",
+      "language": "ar",
+      "types": [
+        "Anime",
+        "TvSeries"
       ]
     }
   ]

@@ -273,10 +273,11 @@
   }
   function collectServers(doc, html, pageUrl) {
     var out = [], seen = {};
-    function add(raw, name, q, auth) {
+    function add(raw, name, q, auth, watch) {
       var u = normUrl(raw, pageUrl);
       if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u)) return;
-      if (host(u) === host(pageUrl) && !/embed|player|iframe|\/e\/|\/v\//i.test(u)) return;
+      if (/\/(?:e|v|embed|iframe)\/?$/i.test(u.split(/[?#]/)[0])) return;     // address without an id
+      if (!watch && host(u) === host(pageUrl) && !/embed|player|iframe|\/e\/|\/v\//i.test(u)) return;
       if (!KNOWN.test(u) && !auth) return;
       seen[u] = 1; out.push({ url: u, name: clean(name).slice(0, 22), q: q || '' });
     }
@@ -286,7 +287,7 @@
         var nm = at[i].name;
         if (/^data-/.test(nm) || nm === 'href' || nm === 'src' || nm === 'value') {
           var v = at[i].value;
-          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el), /^data-(ep-)?(url|src|embed|link|iframe|player)$/i.test(nm));
+          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el), /^data-(ep-)?(url|src|embed|link|iframe|player|watch)$/i.test(nm), nm === 'data-watch');
         }
       }
     });
@@ -417,7 +418,7 @@
   async function vidstackLinks(sv, page, rep) {
     var u; try { u = new URL(sv.url); } catch (e) { return []; }
     var id = u.hash.replace(/^#/, '') || (u.searchParams && (u.searchParams.get('id') || u.searchParams.get('v'))) || '';
-    if (!id) { var seg = u.pathname.split('/').filter(Boolean); if (seg.length > 1 && /^(e|embed|v|d|f)$/i.test(seg[seg.length - 2])) id = seg[seg.length - 1]; }
+    if (!id) { var seg = u.pathname.split('/').filter(Boolean); if (seg.length > 1 && /^(e|embed|v|d|f|iframe)$/i.test(seg[seg.length - 2])) id = seg[seg.length - 1]; }
     if (!id) return [];
     var api = u.origin + '/api/v1/video?id=' + encodeURIComponent(id) + '&w=1920&h=1080&r=' + encodeURIComponent(realRef(page));
     var r = await relayFirst(api, { referer: sv.url }), t = String(r.t).trim();

@@ -1,20 +1,25 @@
-// Anime4up provider for MediaHub (anime site, Arabic subtitles).
-// Built from the selectors found in the Cloudstream plugin (anime-card-themex, all-episodes-list, episode-servers[data-watch]).
-// Needs the relay (Settings > Proxy) because the site refuses the TV's own requests.
+// Anime4up provider for MediaHub (anime site, Arabic subtitles). Based on the Witanime provider.
+// Mirror domains (e.g. 4p.xxx.shop) serve pages whose links point to the real domain (w1.anime4up.rest);
+// every such link is rewritten to the address you typed so all requests go through the same domain.
+// Written from screenshots of the site, not its HTML, so every step is heuristic and the error messages
+// say what was found. Server pages (ok.ru, hgcloud, yonaplay ...) are opened from the TV itself first.
 (function () {
   'use strict';
 
-  var MEDIA = /https?:\\?\/\\?\/[^"'\s<>\\]+?\.(?:m3u8|mp4|mpd)(?:\?[^"'\s<>\\]*)?/gi;
+  var MEDIA = /https?:\\?\/\\?\/[^"'\s<>\\]+?\.(?:m3u8|mp4|mpd)(?![\w.-])(?:\?[^"'\s<>\\]*)?/gi;
   var NOTMEDIA = /\.(jpe?g|png|gif|webp|svg|css|js|ico|vtt|srt|json|woff2?|ttf)(\?|$)/i;
   var SKIPPATH = /\/(category|tag|genre|genres|page|author|wp-content|wp-json|feed|login|register|contact|dmca|privacy|anime-type|anime-status|season|studio)(\/|$)/i;
   var LABELS = 'الاستوديو|المصدر|الحلقات|الموسم|السنة|المدة|البلد|التصنيف العمري|التصنيف|النوع|الحالة|العرض|بداية العرض|نهاية العرض|studio|source|episodes|season|year|duration|country|rating|status|type';
 
+  var SITE = '';
+  var SELF = /https?:\/\/(?:[a-z0-9-]+\.)?anime4up\.(?:rest|com|tv|cc|net|org|site|shop|io|me|info|co)(?![a-z0-9.-]*[a-z0-9])/gi;
   // ---------- small helpers ----------
   function baseOf(cfg) {
     var u = String((cfg && cfg.url) || '').trim();
     if (!u) throw new Error('Site address is empty');
     if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
-    return u.replace(/\/+$/, '');
+    SITE = u.replace(/\/+$/, '');
+    return SITE;
   }
   function abs(u, base) { try { return new URL(u, base).href; } catch (e) { return ''; } }
   function clean(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
@@ -22,39 +27,28 @@
   function dec(u) { try { return decodeURIComponent(u); } catch (e) { return u; } }
   function latin(d) { return String(d).replace(/[\u0660-\u0669]/g, function (c) { return c.charCodeAt(0) - 0x660; }); }
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
-  // The address typed in Settings can be a redirector (it may forward to another domain), so the site's own
-  // domain is learned from the page (canonical link) and links to it count as "same site".
-  var SITES = {};
-  function reg(h) { return String(h).split('.').slice(-2).join('.'); }
-  function same(h, h0) { return !!h && (h === h0 || reg(h) === reg(h0) || !!SITES[h] || !!SITES[reg(h)]); }
-  function parse(html) {
-    var d = new DOMParser().parseFromString(html, 'text/html');
-    try {
-      var c = d.querySelector('link[rel="canonical"]'), m = d.querySelector('meta[property="og:url"]'), u = (c && c.getAttribute('href')) || (m && m.getAttribute('content')) || '';
-      if (u) { var hh = host(u); if (hh) { SITES[hh] = 1; SITES[reg(hh)] = 1; } }
-    } catch (e) {}
-    return d;
-  }
+  function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
+  var REAL = '';
   async function getHtml(url) {
-    // with a relay set, ask it first (it sends a browser User-Agent); the TV's own request is the fallback
-    if (MediaHub.proxy) {
-      var o; try { o = new URL(url).origin + '/'; } catch (e) { o = ''; }
-      try { return await MediaHub.getText(url, { referer: o }); }
-      catch (e1) { try { return await MediaHub.getText(url, { direct: true }); } catch (e2) { throw e1; } }
-    }
-    return MediaHub.getText(url);
+    var t = await MediaHub.getText(url);
+    var m = t.match(/<link[^>]+rel=["']canonical["'][^>]*href=["'](https?:\/\/[^\/"']+)/i) || t.match(/<link[^>]+href=["'](https?:\/\/[^\/"']+)[^>]*rel=["']canonical["']/i) || t.match(/property=["']og:url["'][^>]*content=["'](https?:\/\/[^\/"']+)/i);
+    if (m && /anime4up/i.test(m[1])) REAL = m[1];
+    return SITE ? t.replace(SELF, SITE) : t;
+  }
+  function realRef(u) { return REAL && SITE ? String(u).replace(SITE, REAL) : u; }
+  // servers that check the Referer: ask through the relay first (it can send one), the TV itself cannot
+  async function relayFirst(url, opt) {
+    if (MediaHub.proxy) { try { return { t: await MediaHub.getText(url, opt), relay: true }; } catch (e) { var e1 = e; } }
+    return smartText(url, opt);
   }
   // the TV's own network first (stream links are tied to the requester), the relay only as a fallback
   async function smartText(url, opt) {
     opt = opt || {};
     try { return { t: await MediaHub.getText(url, Object.assign({}, opt, { direct: true })), relay: false }; }
-    catch (e1) {
-      try { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
-      catch (e2) { throw new Error('direct: ' + (e1 && e1.message) + ' | relay: ' + (e2 && e2.message)); }
-    }
+    catch (e1) { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
   }
   function isJunk(u) {
-    return /imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|myanimelist|anilist|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
+    return /googleusercontent|gstatic|favicon|imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|myanimelist|anilist|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
   }
   function metaOf(d, p) { var m = d.querySelector('meta[property="' + p + '"],meta[name="' + p + '"]'); return m ? m.getAttribute('content') : ''; }
   function h1Of(d) { var h = d.querySelector('h1'); return clean(h && h.textContent) || clean(metaOf(d, 'og:title')); }
@@ -133,28 +127,7 @@
     if (!t) { t = clean(a.textContent).replace(/^(?:الحلقة\s*\d+\s*)+/, ''); }
     return t;
   }
-  // Anime4up's own markup first (card classes taken from the Cloudstream plugin), heuristics only as a fallback
-  function cards(doc, base) {
-    var groups = [], byName = {}, seen = {}, h0 = host(base);
-    [].forEach.call(doc.querySelectorAll('.anime-card-themex, .themexblock, .anime-card-container'), function (c) {
-      if (c.parentElement && c.parentElement.closest && c.parentElement.closest('.anime-card-themex, .themexblock, .anime-card-container')) return;
-      var a = c.querySelector('.anime-card-title h3 a[href], h3 a[href], h2 a[href], a[href*="/anime/"]');
-      if (!a) return;
-      var href = abs(a.getAttribute('href'), base);
-      if (!href || !same(host(href), h0) || SKIPPATH.test(href) || seen[href]) return;
-      var title = clean(a.getAttribute('title') || a.textContent);
-      if (!title || title.length > 140) return;
-      var img = c.querySelector('.anime-thumbnail img, img'), pic = '';
-      if (img) pic = img.getAttribute('data-image') || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || '';
-      if (!pic || /^data:/.test(pic)) pic = '';
-      seen[href] = 1;
-      var w = c.closest && c.closest('.main-widget'), hd = w && w.querySelector('.main-didget-head h3'), name = clean(hd && hd.textContent) || 'Anime4up';
-      if (!byName[name]) { byName[name] = { title: name, items: [] }; groups.push(byName[name]); }
-      byName[name].items.push({ id: href, url: href, title: title, poster: pic ? abs(pic, base) : '' });
-    });
-    return groups.length ? groups : cardsHeur(doc, base);
-  }
-  function cardsHeur(doc, base) {
+  function cardsGeneric(doc, base) {
     var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
     groups.push(cur);
     [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,a[href]'), function (n) {
@@ -165,7 +138,7 @@
         return;
       }
       var href = abs(n.getAttribute('href'), base);
-      if (!href || !same(host(href), h0) || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/') return;
+      if (!href || host(href) !== h0 || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/') return;
       if (!hasPic(n)) return;
       var title = titleOf(n);
       if (!title || title.length > 140 || seen[href]) return;
@@ -174,23 +147,53 @@
     });
     return groups.filter(function (g) { return g.items.length; });
   }
+
+  // Anime4up cards: the title is an <h3><a href=anime page>, the poster <img> sits in a sibling element of the same card.
+  function imgUrl(img, base) {
+    if (!img) return '';
+    var u = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    if (/^data:/.test(u)) u = '';
+    if (!u) { var ss = img.getAttribute('data-srcset') || img.getAttribute('srcset') || ''; u = (ss.split(',')[0] || '').trim().split(/\s+/)[0]; }
+    return u ? abs(u, base) : '';
+  }
+  function cards(doc, base) {
+    var groups = [], cur = { title: 'Latest', items: [] }, seen = {}, h0 = host(base);
+    groups.push(cur);
+    [].forEach.call(doc.body.querySelectorAll('h1,h2,h3,h4'), function (h) {
+      var a = h.querySelector('a[href]');
+      if (!a) {
+        var t = clean(h.textContent);
+        if (t && t.length < 50) { if (cur.items.length) { cur = { title: t, items: [] }; groups.push(cur); } else cur.title = t; }
+        return;
+      }
+      var href = abs(a.getAttribute('href'), base);
+      if (!href || host(href) !== h0 || SKIPPATH.test(href) || /#$/.test(href) || href === base + '/' || seen[href]) return;
+      var title = clean(a.textContent) || clean(a.getAttribute('title'));
+      if (!title || title.length > 140) return;
+      var img = null, el = h.parentElement;
+      for (var up = 0; el && up < 4 && !img; up++, el = el.parentElement) {
+        if (el.querySelectorAll('h3 a[href],h2 a[href],h4 a[href]').length > 1) break;
+        img = el.querySelector('img');
+      }
+      seen[href] = 1;
+      cur.items.push({ id: href, url: href, title: title, poster: imgUrl(img, base) });
+    });
+    var out = groups.filter(function (g) { return g.items.length; });
+    return out.length ? out : cardsGeneric(doc, base);
+  }
   function searchCards(html, base) { var out = []; cards(parse(html), base).forEach(function (g) { out = out.concat(g.items); }); return out; }
   function nextLink(d, u, h0) {
     var a = d.querySelector('link[rel="next"],a[rel="next"],a.next,a.page-numbers.next,.pagination a.next');
     var h = a ? abs(a.getAttribute('href'), u) : '';
-    return h && h !== u && same(host(h), h0) ? h : '';
+    return h && h !== u && host(h) === h0 ? h : '';
   }
 
   // ---------- episodes & details ----------
   function extractEps(d, u, h0) {
     var out = [], words = slugOf(u).slice(0, 2);
-    [].forEach.call(d.querySelectorAll('ul.all-episodes-list li a[href], .anime-external-links a.anime-first-ep[href]'), function (a) {
-      var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
-      if (href && href !== u && same(host(href), h0) && !/#$/.test(href)) out.push({ href: href, t: /^[\d\u0660-\u0669]{1,4}$/.test(t) ? 'الحلقة ' + latin(t) : t });
-    });
     [].forEach.call(d.querySelectorAll('a[href]'), function (a) {
       var href = abs(a.getAttribute('href'), u), t = clean(a.textContent);
-      if (!href || href === u || !same(host(href), h0)) return;
+      if (!href || href === u || host(href) !== h0) return;
       var dh = dec(href).toLowerCase(), isNum = /^[\d\u0660-\u0669]{1,4}$/.test(t);
       if (SKIPPATH.test(href) || /#$/.test(href)) return;
       if (words.length && !words.every(function (w) { return dh.indexOf(w) >= 0; }) && !/^(الحلقة|حلقة|episode)\s*[\d\u0660-\u0669]+/i.test(t)) return;
@@ -212,7 +215,7 @@
     var best = '';
     [].forEach.call(d.querySelectorAll('a[href*="/anime/"],[class*="breadcrumb"] a[href]'), function (a) {
       var href = abs(a.getAttribute('href'), url), pth = ''; try { pth = new URL(href).pathname; } catch (e) {}
-      if (!href || href === url || !same(host(href), h0) || pth.length < 4 || /\/episode\//i.test(pth) || /الحلقة/.test(dec(pth)) || SKIPPATH.test(href)) return;
+      if (!href || href === url || host(href) !== h0 || pth.length < 4 || /\/episode\//i.test(pth) || /الحلقة/.test(dec(pth)) || SKIPPATH.test(href)) return;
       if (!best || /\/anime\//i.test(pth)) best = href;
     });
     return best;
@@ -248,7 +251,7 @@
   }
 
   // ---------- video servers ----------
-  var KNOWN = /share4max|megamax|megabox|files\/mirror|ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|filemoon|sendvid|vk\.com|embed|\/e\/|player|\/v\//i;
+  var KNOWN = /ok\.ru|videa|yonaplay|mega\.nz|hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|playmogo|filemoon|sendvid|vk\.com|swish|wish|vidhide|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|embed|\/e\/|player|\/v\//i;
   function normUrl(raw, base) {
     raw = unent(String(raw || '').trim());
     if (!raw || raw.length > 900 || /^(javascript|#|mailto)/i.test(raw)) return '';
@@ -270,10 +273,11 @@
   }
   function collectServers(doc, html, pageUrl) {
     var out = [], seen = {};
-    function add(raw, name, q) {
+    function add(raw, name, q, auth) {
       var u = normUrl(raw, pageUrl);
-      if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u) || host(u) === host(pageUrl)) return;
-      if (!KNOWN.test(u)) return;
+      if (!u || seen[u] || isJunk(u) || NOTMEDIA.test(u)) return;
+      if (host(u) === host(pageUrl) && !/embed|player|iframe|\/e\/|\/v\//i.test(u)) return;
+      if (!KNOWN.test(u) && !auth) return;
       seen[u] = 1; out.push({ url: u, name: clean(name).slice(0, 22), q: q || '' });
     }
     [].forEach.call(doc.querySelectorAll('*'), function (el) {
@@ -282,7 +286,7 @@
         var nm = at[i].name;
         if (/^data-/.test(nm) || nm === 'href' || nm === 'src' || nm === 'value') {
           var v = at[i].value;
-          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el));
+          if (v && v.length < 900 && (nm !== 'href' || el.tagName !== 'A' || KNOWN.test(v))) add(v, el.getAttribute('data-server') || el.getAttribute('data-name') || (clean(el.textContent).length < 30 ? el.textContent : ''), qualityOf(el), /^data-(ep-)?(url|src|embed|link|iframe|player)$/i.test(nm));
         }
       }
     });
@@ -290,13 +294,16 @@
     (all.replace(/\\\//g, '/').match(/https?:\/\/[^"'\s<>\\)]+/g) || []).forEach(function (u) { add(u, '', ''); });
     return out;
   }
-  function serverRank(u) {
+  function serverRank(u, name) {
     var h = host(u);
+    if (/anime4up|megamax/i.test(name || '') || /megamax/i.test(h)) return 0;
     if (/ok\.ru/.test(h)) return 1;
-    if (/hgcloud|hglink|haxloppd|streamwish|wishfast|vidhide|filelions|filemoon/.test(h)) return 2;
+    if (/hgcloud|hglink|haxloppd|streamwish|wishfast|swish|wish|vidhide|filelions|filemoon|dhcplay|minochinos|cybervynx/.test(h)) return 2;
     if (/yonaplay/.test(h)) return 3;
-    if (/mp4upload|sendvid|dood|voe/.test(h)) return 4;
+    if (/sendvid|voe|vidmoly|lulu|uqload|streamtape|mixdrop/.test(h)) return 4;
+    if (/dood|playmogo|mogo|ds2play|d000d/.test(h)) return 7;
     if (/videa/.test(h)) return 6;
+    if (/mp4upload/.test(h)) return 9;
     return 5;
   }
 
@@ -318,14 +325,126 @@
   }
 
   // open a server page and pull out the stream address(es)
+
+  // ---------- Doodstream family (playmogo.com, dood.*, ds2play ...) ----------
+  async function doodLinks(txt, sv) {
+    var m = txt.match(/\/pass_md5\/[^'"\s<>\\]+/);
+    if (!m) return null;
+    var origin = abs(sv.url, sv.url).replace(/^(https?:\/\/[^\/]+).*$/, '$1');
+    var tk = (txt.match(/[?&]token=([A-Za-z0-9]+)/) || [])[1] || m[0].split('/').pop();
+    var r = await smartText(origin + m[0], { referer: sv.url }), base = String(r.t).trim();
+    if (!/^https?:\/\//i.test(base)) throw new Error('pass_md5 gave "' + base.slice(0, 30) + '"');
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', rnd = '';
+    for (var i = 0; i < 10; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length));
+    return { url: base + rnd + '?token=' + tk + '&expiry=' + Date.now(), relay: !!MediaHub.proxy, ref: origin + '/' };
+  }
+  // ---------- VOE (best effort: the page hides the playlist in an encoded JSON blob) ----------
+  function voeSource(txt) {
+    try {
+      var h = txt.match(/["']hls["']\s*:\s*["']([A-Za-z0-9+\/=]{20,})["']/);
+      if (h) { var u = b64text(h[1]); if (/^https?:/i.test(u)) return u; }
+      var m = txt.match(/<script[^>]*type=["']application\/json["'][^>]*>\s*\[\s*"([^"]+)"\s*\]/i);
+      if (!m) return '';
+      var x = m[1].replace(/[a-zA-Z]/g, function (c) { var k = c.charCodeAt(0) + 13; return String.fromCharCode((c <= 'Z' ? 90 : 122) >= k ? k : k - 26); });
+      ['@$', '^^', '~@', '%?', '*~', '!!', '#&'].forEach(function (q) { x = x.split(q).join(''); });
+      x = b64text(x).split('').map(function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 3); }).reverse().join('');
+      var j = JSON.parse(b64text(x));
+      return j.source || j.direct_access_url || '';
+    } catch (e) { return ''; }
+  }
+  // ---------- AES-128-CBC decrypt (small, no dependencies: the TV's WebCrypto is not always available) ----------
+  var AES_SBOX = null, AES_INV = null;
+  function aesInit() {
+    if (AES_SBOX) return;
+    var s = new Array(256), inv = new Array(256), p = 1, q = 1;
+    function rotl(x, n) { return ((x << n) | (x >> (8 - n))) & 255; }
+    do {
+      p = p ^ ((p << 1) & 255) ^ (p & 128 ? 27 : 0);
+      q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 255; if (q & 128) q ^= 9;
+      var x = q ^ rotl(q, 1) ^ rotl(q, 2) ^ rotl(q, 3) ^ rotl(q, 4) ^ 99;
+      s[p] = x; inv[x] = p;
+    } while (p !== 1);
+    s[0] = 99; inv[99] = 0;
+    AES_SBOX = s; AES_INV = inv;
+  }
+  function gmul(a, b) { var r = 0; while (b) { if (b & 1) r ^= a; a = ((a << 1) & 255) ^ (a & 128 ? 27 : 0); b >>= 1; } return r; }
+  function aesKeys(key) {
+    var w = [], i, t, rc = 1;
+    for (i = 0; i < 16; i++) w[i] = key[i];
+    for (i = 16; i < 176; i += 4) {
+      t = [w[i - 4], w[i - 3], w[i - 2], w[i - 1]];
+      if (i % 16 === 0) { t = [AES_SBOX[t[1]] ^ rc, AES_SBOX[t[2]], AES_SBOX[t[3]], AES_SBOX[t[0]]]; rc = ((rc << 1) & 255) ^ (rc & 128 ? 27 : 0); }
+      for (var j = 0; j < 4; j++) w[i + j] = w[i - 16 + j] ^ t[j];
+    }
+    return w;
+  }
+  function aesBlockDec(b, w) {
+    var st = b.slice(), r, i, c;
+    function add(rk) { for (var k = 0; k < 16; k++) st[k] ^= w[rk * 16 + k]; }
+    add(10);
+    for (r = 9; r >= 0; r--) {
+      var t = st.slice();                                   // inverse shift rows
+      for (c = 0; c < 4; c++) for (i = 0; i < 4; i++) st[((c + i) % 4) * 4 + i] = t[c * 4 + i];
+      for (i = 0; i < 16; i++) st[i] = AES_INV[st[i]];
+      add(r);
+      if (r > 0) for (c = 0; c < 4; c++) {                  // inverse mix columns
+        var a0 = st[c * 4], a1 = st[c * 4 + 1], a2 = st[c * 4 + 2], a3 = st[c * 4 + 3];
+        st[c * 4] = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9);
+        st[c * 4 + 1] = gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13);
+        st[c * 4 + 2] = gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11);
+        st[c * 4 + 3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14);
+      }
+    }
+    return st;
+  }
+  function aesCbcHex(hex, keyStr, ivStr) {
+    aesInit();
+    var d = [], i, j;
+    for (i = 0; i + 1 < hex.length; i += 2) d.push(parseInt(hex.substr(i, 2), 16));
+    var key = [], iv = [];
+    for (i = 0; i < 16; i++) { key.push(keyStr.charCodeAt(i) & 255); iv.push(ivStr.charCodeAt(i) & 255); }
+    var w = aesKeys(key), out = '', prev = iv;
+    for (i = 0; i + 16 <= d.length; i += 16) {
+      var blk = d.slice(i, i + 16), pl = aesBlockDec(blk, w);
+      for (j = 0; j < 16; j++) out += String.fromCharCode(pl[j] ^ prev[j]);
+      prev = blk;
+    }
+    var pad = out.charCodeAt(out.length - 1); if (pad > 0 && pad <= 16) out = out.slice(0, out.length - pad);
+    return out;
+  }
+
+  async function vidstackLinks(sv, page, rep) {
+    var u; try { u = new URL(sv.url); } catch (e) { return []; }
+    var id = u.hash.replace(/^#/, '') || (u.searchParams && (u.searchParams.get('id') || u.searchParams.get('v'))) || '';
+    if (!id) { var seg = u.pathname.split('/').filter(Boolean); if (seg.length > 1 && /^(e|embed|v|d|f)$/i.test(seg[seg.length - 2])) id = seg[seg.length - 1]; }
+    if (!id) return [];
+    var api = u.origin + '/api/v1/video?id=' + encodeURIComponent(id) + '&w=1920&h=1080&r=' + encodeURIComponent(realRef(page));
+    var r = await relayFirst(api, { referer: sv.url }), t = String(r.t).trim();
+    var plain = t;
+    if (/^[0-9a-f]{32,}$/i.test(t)) plain = aesCbcHex(t, 'kiemtienmua911ca', '1234567890oiuytr');
+    var urls = [], seenU = {};
+    plain.replace(/\\\//g, '/').replace(/"(?:source|hls|file|url|cf)"\s*:\s*"(https?:\/\/[^"]+)"/gi, function (m0, x) { if (!seenU[x] && !NOTMEDIA.test(x)) { seenU[x] = 1; urls.push(x); } return m0; });
+    if (!urls.length) { plain.replace(MEDIA, function (m0) { if (!seenU[m0]) { seenU[m0] = 1; urls.push(m0); } return m0; }); }
+    if (!urls.length) { rep.push(host(sv.url).slice(0, 12) + ' api: ' + plain.replace(/\s+/g, ' ').slice(0, 38)); return []; }
+    rep.push(host(sv.url).slice(0, 12) + ' api ok ' + urls.length);
+    return urls.map(function (x) { return { url: x, q: '', relay: true, ref: u.origin + '/', name: sv.name, sq: sv.q }; });
+  }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
-    if (/mega\.nz|mega\.io/.test(h)) { rep.push(sv.name + ' mega: needs decryption, skipped'); return []; }
+    if (/mega\.nz|mega\.io/.test(h)) return [];
     var r;
-    try { r = await smartText(sv.url, { referer: page }); } catch (e) { rep.push(h + ' ' + (e && e.message)); return []; }
+    var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
+    if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
+    try { r = pri ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
     function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
     if (/ok\.ru/.test(h)) okLinks(txt).forEach(function (x) { push(x.url, x.q); });
+    if (/\/pass_md5\//.test(txt)) {
+      try { var dl = await doodLinks(txt, sv); if (dl) { rep.push(h + ' dood ok'); return [{ url: dl.url, q: '', relay: dl.relay, ref: dl.ref, name: sv.name, sq: sv.q }]; } }
+      catch (e) { rep.push(h + ' dood: ' + (e && e.message)); }
+    }
+    var vs = voeSource(txt);
+    if (vs) push(vs);
     var all = unent(txt) + unpackAll(unent(txt)) + hiddenText(unent(txt));
     if (!found.length) {
       all.replace(/\\\//g, '/').replace(MEDIA, function (m0) { push(m0); return m0; });
@@ -360,7 +479,7 @@
   MediaHub.registerProvider({
     id: 'anime4up',
     name: 'Anime4up',
-    fields: [{ key: 'url', label: 'Site address (current Anime4up domain)', placeholder: 'https://w1.anime4up.rest' }],
+    fields: [{ key: 'url', label: 'Site address (current Anime4up domain)', placeholder: 'https://4p.fabnkbo.shop' }],
 
     getHome: async function (cfg) {
       var base = baseOf(cfg), html = await getHtml(base + '/'), g = cards(parse(html), base);
@@ -411,13 +530,9 @@
       var animeUrl = isEp ? animePageLink(doc, url, h0) : url, ad = doc, aurl = url;
       if (isEp && animeUrl) { try { ad = parse(await getHtml(animeUrl)); aurl = animeUrl; } catch (e) { ad = doc; aurl = url; } }
       var seen = {}, list = [];
-      function addAll(ex) { ex.forEach(function (e) { if (seen[e.href]) return; seen[e.href] = 1; list.push({ id: e.href, url: e.href, title: e.t, ref: aurl, n: epNum(dec(e.href) + ' ' + e.t) }); }); }
+      function addAll(ex) { ex.forEach(function (e) { if (seen[e.href]) return; seen[e.href] = 1; list.push({ id: e.href, url: e.href, title: e.t, n: epNum(dec(e.href) + ' ' + e.t) }); }); }
       addAll(await collectEps(aurl, h0, ad));
-      if (!list.length) {   // the page keeps its data as JSON inside script[data-page]
-        var raw = unent((ad.documentElement && ad.documentElement.outerHTML) || '').replace(/\\\//g, '/'), mm = raw.match(/https?:\/\/[^"'\s<>\\]+\/episode\/[^"'\s<>\\]+/g) || [];
-        addAll(mm.filter(function (x) { return same(host(x), h0); }).map(function (x) { return { href: x, t: '' }; }));
-      }
-      if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, ref: aurl, n: epNum(dec(url) + ' ' + pageTitle) }); } }
+      if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, n: epNum(dec(url) + ' ' + pageTitle) }); } }
       list = list.map(function (e, i) { e.k = i; return e; });
       if (list.some(function (e) { return e.n > 0; })) list.sort(function (a, b) { return (a.n - b.n) || (a.k - b.k); });
       var seenN = {};
@@ -433,23 +548,21 @@
 
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
-      var html = '', errs = [];
-      var tries = MediaHub.proxy ? [{ referer: base + '/' }, {}] : [{}];
-      if (target.ref && MediaHub.proxy) tries.splice(1, 0, { referer: target.ref });
-      var n403 = 0;
-      for (var ti = 0; ti < tries.length && !html && n403 < 2; ti++) {
-        try { html = (await smartText(page, tries[ti])).t; } catch (e) { errs.push((tries[ti].referer ? 'with referer ' : 'plain ') + (e && e.message)); if (/403/.test(e && e.message)) n403++; }
-      }
-      if (!html) throw new Error('episode page refused: ' + errs.join(' ; ') + ' (' + dec(page.replace(base, '')).slice(0, 70) + ')');
-      var doc = parse(html);
+      var html = await getHtml(page), doc = parse(html);
       var servers = collectServers(doc, html, page);
-      servers.sort(function (a, b) { return serverRank(a.url) - serverRank(b.url); });
-      var links = [], tried = 0;
-      for (var i = 0; i < servers.length && tried < 8 && links.length < 4; i++) {
+      servers.sort(function (a, b) { return serverRank(a.url, a.name) - serverRank(b.url, b.name); });
+      try { MediaHub.note('anime4up v3 list', servers.map(function (x) { var pu = ''; try { pu = new URL(x.url).pathname.slice(0, 16); } catch (e) {} return (x.name || '?').slice(0, 9) + '=' + host(x.url) + pu; }).join(' ; ')); } catch (e) {}
+      var links = [], tried = 0, good0 = 0;
+      for (var i = 0; i < servers.length && tried < 12 && good0 < 4; i++) {
         tried++;
         var got = await extractServer(servers[i], page, rep);
-        got.forEach(function (g) { if (links.length < 6) links.push(g); });
+        got.forEach(function (g) { if (links.length < 8) { links.push(g); if (!/mp4upload/.test(host(servers[i].url))) good0++; } });
       }
+      // mp4upload needs a Referer and a non-standard port, so it fails on the TV and through the relay: only keep it when nothing else worked
+      if (links.some(function (l) { return !/mp4upload/i.test(host(l.url)) && !/mp4upload/i.test(l.name || '') && !/mp4upload/i.test(l.ref || ''); })) {
+        links = links.filter(function (l) { return !/mp4upload/i.test(l.name || '') && !/mp4upload/i.test(l.ref || ''); });
+      }
+      try { MediaHub.note('anime4up servers', servers.length + ' found: ' + rep.join('; ')); } catch (e) {}
       if (links.length > 1) {                          // keep the HLS/mp4 addresses the TV can really open
         var oks = await Promise.all(links.map(function (l) { return (l.relay || !/\.m3u8/i.test(l.url)) ? Promise.resolve(true) : verifyHls(l.url); }));
         var good = links.filter(function (l, i2) { return oks[i2]; });
@@ -457,8 +570,15 @@
       }
       if (!links.length) {
         var dat = {}; [].forEach.call(doc.querySelectorAll('*'), function (el) { if (el.attributes) for (var j = 0; j < el.attributes.length; j++) if (/^data-/.test(el.attributes[j].name)) dat[el.attributes[j].name] = 1; });
-        throw new Error('No video link. servers found: ' + (servers.slice(0, 6).map(function (s) { return host(s.url); }).join(', ') || 'none') + ' | ' + rep.join('; ') +
-          ' | iframes ' + doc.querySelectorAll('iframe').length + ' | data-attrs: ' + Object.keys(dat).slice(0, 8).join(','));
+        var lst = servers.filter(function (x) { return !/mega\./.test(host(x.url)); }).slice(0, 5).map(function (x) { var pu = ''; try { var uu = new URL(x.url); pu = (uu.pathname + uu.search + uu.hash).slice(0, 18); } catch (e) {} return (x.name || '?').slice(0, 8) + '@' + host(x.url) + pu; });
+        var btn = '';
+        try {
+          var cand = [].filter.call(doc.querySelectorAll('a,button,li,span,div'), function (el) { var t = clean(el.textContent); return t.length < 40 && /megamax|anime4up\s*\d/i.test(t); });
+          var el0 = cand.filter(function (el) { return !el.querySelector('a,button,li,div'); })[0] || cand[cand.length - 1];
+          if (el0) btn = el0.outerHTML.replace(/\s+/g, ' ').replace(/(class|style)="[^"]*"/g, '').slice(0, 170);
+          var ax = doc.querySelector('[data-ajax-url]'); if (ax) btn += ' AJAX=' + String(ax.getAttribute('data-ajax-url')).slice(0, 40);
+        } catch (e) {}
+        throw new Error('v6 BTN ' + (btn || 'none') + ' | ' + rep.join('; ') + ' | servers ' + servers.length + ': ' + (lst.join(' ; ') || 'only mega'));
       }
       return links.map(function (l, n) {
         var nm = (l.name || host(l.url).split('.').slice(-2, -1)[0] || 'Server') + (l.sq ? ' ' + l.sq : '') + (l.q ? ' ' + l.q : '');

@@ -332,7 +332,7 @@
     if (!m) return null;
     var origin = abs(sv.url, sv.url).replace(/^(https?:\/\/[^\/]+).*$/, '$1');
     var tk = (txt.match(/[?&]token=([A-Za-z0-9]+)/) || [])[1] || m[0].split('/').pop();
-    var r = await smartText(origin + m[0], { referer: sv.url }), base = String(r.t).trim();
+    var r = await relayFirst(origin + m[0], { referer: sv.url }), base = String(r.t).trim();   // same network (the relay) as the page and the video, the link is tied to it
     if (!/^https?:\/\//i.test(base)) throw new Error('pass_md5 gave "' + base.slice(0, 30) + '"');
     var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', rnd = '';
     for (var i = 0; i < 10; i++) rnd += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -436,7 +436,8 @@
     var r;
     var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
     if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
-    try { r = pri ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
+    var dd = /dood|playmogo|ds2play|d000d|mogo/i.test(h);
+    try { r = (pri || dd) ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
     function push(u, q) { u = String(u).replace(/\\\//g, '/'); if (!isJunk(u) && !seen[u]) { seen[u] = 1; found.push({ url: u, q: q || '' }); } }
     if (/ok\.ru/.test(h)) okLinks(txt).forEach(function (x) { push(x.url, x.q); });

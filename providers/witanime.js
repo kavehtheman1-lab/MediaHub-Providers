@@ -23,7 +23,15 @@
   function latin(d) { return String(d).replace(/[\u0660-\u0669]/g, function (c) { return c.charCodeAt(0) - 0x660; }); }
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
-  async function getHtml(url) { return MediaHub.getText(url); }
+  async function getHtml(url) {
+    // with a relay set, ask it first (it sends a browser User-Agent); the TV's own request is the fallback
+    if (MediaHub.proxy) {
+      var o; try { o = new URL(url).origin + '/'; } catch (e) { o = ''; }
+      try { return await MediaHub.getText(url, { referer: o }); }
+      catch (e1) { try { return await MediaHub.getText(url, { direct: true }); } catch (e2) { throw e1; } }
+    }
+    return MediaHub.getText(url);
+  }
   // the TV's own network first (stream links are tied to the requester), the relay only as a fallback
   async function smartText(url, opt) {
     opt = opt || {};
@@ -385,10 +393,11 @@
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
       var html = '', errs = [];
-      var tries = [{}, { referer: base + '/' }, { referer: page.replace(/\/episode\/.*$/, '/') }];
-      if (target.ref) tries.splice(1, 0, { referer: target.ref });
-      for (var ti = 0; ti < tries.length && !html; ti++) {
-        try { html = (await smartText(page, tries[ti])).t; } catch (e) { errs.push((tries[ti].referer ? 'with referer ' : 'plain ') + (e && e.message)); }
+      var tries = MediaHub.proxy ? [{ referer: base + '/' }, {}] : [{}];
+      if (target.ref && MediaHub.proxy) tries.splice(1, 0, { referer: target.ref });
+      var n403 = 0;
+      for (var ti = 0; ti < tries.length && !html && n403 < 2; ti++) {
+        try { html = (await smartText(page, tries[ti])).t; } catch (e) { errs.push((tries[ti].referer ? 'with referer ' : 'plain ') + (e && e.message)); if (/403/.test(e && e.message)) n403++; }
       }
       if (!html) throw new Error('episode page refused: ' + errs.join(' ; ') + ' (' + dec(page.replace(base, '')).slice(0, 70) + ')');
       var doc = parse(html);

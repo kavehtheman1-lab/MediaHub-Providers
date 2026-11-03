@@ -461,7 +461,7 @@
         }
       }
     }
-    rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + ' -> ' + found.length);
+    rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + (txt.length < 200 ? ' "' + txt.replace(/\s+/g, ' ').slice(0, 40) + '"' : '') + ' -> ' + found.length);
     return found.map(function (f) { return { url: f.url, q: f.q, relay: r.relay, ref: /ok\.ru/.test(h) ? 'https://ok.ru/' : sv.url, name: sv.name, sq: sv.q }; });
   }
   // a quick look at an HLS playlist the way the TV will open it

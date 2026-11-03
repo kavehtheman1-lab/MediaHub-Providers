@@ -554,7 +554,12 @@
     if (!id) { var seg = u.pathname.split('/').filter(Boolean); if (seg.length > 1 && /^(e|embed|v|d|f|iframe)$/i.test(seg[seg.length - 2])) id = seg[seg.length - 1]; }
     if (!id) return [];
     var api = u.origin + '/api/v1/video?id=' + encodeURIComponent(id) + '&w=1920&h=1080&r=' + encodeURIComponent(realRef(page));
-    var r = await relayFirst(api, { referer: sv.url }), t = String(r.t).trim();
+    var t = '', apiErr = [];
+    try { t = String(await MediaHub.getText(api, { direct: true })).trim(); } catch (e1) { apiErr.push('d ' + String((e1 && e1.message) || e1).slice(0, 22)); }
+    if (!t || /^</.test(t) && t.length < 300) {
+      if (MediaHub.proxy) { try { t = String(await MediaHub.getText(api, { referer: sv.url })).trim(); } catch (e2) { apiErr.push('r ' + String((e2 && e2.message) || e2).slice(0, 22)); } }
+    }
+    if (!t) { rep.push(host(sv.url).slice(0, 12) + ' api: ' + apiErr.join(' | ')); return []; }
     var plain = t;
     if (/^[0-9a-f]{32,}$/i.test(t)) plain = aesCbcHex(t, 'kiemtienmua911ca', '1234567890oiuytr');
     var urls = [], seenU = {};
@@ -564,12 +569,44 @@
     rep.push(host(sv.url).slice(0, 12) + ' api ok ' + urls.length);
     return urls.map(function (x) { return { url: x, q: '', relay: true, ref: u.origin + '/', name: sv.name, sq: sv.q }; });
   }
+
+  // ---------- Inertia players (Laravel + Vue pages that keep the video data as JSON inside the page) ----------
+  async function inertiaScan(txt, sv, push) {
+    var m = txt.match(/<script[^>]*>\s*(\{"component":[\s\S]*?\})\s*<\/script>/);
+    if (!m) { var m2 = txt.match(/data-page=(["'])(\{[\s\S]*?\})\1/); if (m2) m = [0, unent(m2[2])]; }
+    if (!m) return;
+    var h = host(sv.url).slice(0, 12), obj, leaves = [];
+    try { obj = JSON.parse(m[1]); } catch (e) { DQ.push(['egydead json ' + h, 'parse failed ' + String(m[1]).slice(0, 120)]); return; }
+    (function walk(v, path, d) {
+      if (d > 6 || leaves.length > 90) return;
+      if (v && typeof v === 'object') Object.keys(v).slice(0, 40).forEach(function (k) { walk(v[k], path + '.' + k, d + 1); });
+      else if (typeof v === 'string' || typeof v === 'number') leaves.push([path, String(v)]);
+    })(obj.props || obj, 'p', 0);
+    var isMed = function (u) { return /\.(?:m3u8|mp4|mpd)(?![\w.-])/i.test(u); };
+    leaves.forEach(function (l) {
+      var v = l[1].replace(/\\\//g, '/');
+      if ((/^https?:\/\//i.test(v) || /^\//.test(v)) && isMed(v)) push(abs(v, sv.url));
+    });
+    DQ.push(['egydead json ' + h, leaves.map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 26); }).slice(0, 24).join(' ; ')]);
+    // the player script knows which address it asks for the stream: list the paths it contains
+    var srcs = [];
+    txt.replace(/<(?:script|link)[^>]+(?:src|href)=["']([^"']+\.js[^"']*)["']/gi, function (m0, x) { var a = abs(x, sv.url); if (srcs.indexOf(a) < 0) srcs.push(a); return m0; });
+    var hits = [], seenH = {}, ctx = [];
+    for (var i = 0; i < srcs.length && i < 5; i++) {
+      var js; try { js = await MediaHub.getText(srcs[i], { direct: true }); } catch (e) { continue; }
+      js.replace(/["'`](\/[A-Za-z0-9_\-\/\.${}:]*(?:api|hls|stream|m3u8|mp4|playlist|source|embed|token|player|video|file)[A-Za-z0-9_\-\/\.${}:?=&]*)["'`]/gi, function (m0, x) { if (x.length > 3 && x.length < 60 && !seenH[x]) { seenH[x] = 1; hits.push(x); } return m0; });
+      if (ctx.length < 3) js.replace(/.{0,45}(?:\.m3u8|\.mp4|\.hashId|hashId).{0,45}/g, function (m0) { if (ctx.length < 3) ctx.push(m0.replace(/\s+/g, ' ')); return m0; });
+    }
+    DQ.push(['egydead js ' + srcs.length + ' ' + h, hits.slice(0, 26).join(' ')]);
+    if (ctx.length) DQ.push(['egydead ctx ' + h, ctx.join(' || ')]);
+  }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
     if (/mega\.nz|mega\.io/.test(h)) return [];
     var r;
     var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
-    if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
+    var unk = /\/(?:e|iframe)\/[A-Za-z0-9_-]{8,}\/?$/.test(sv.url.split(/[?#]/)[0]) && !/ok\.ru|videa|vk\.|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|playmogo|filemoon|sendvid|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|hgcloud|hglink|haxloppd/i.test(h);
+    if (pri || unk || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
     var dd = /dood|playmogo|ds2play|d000d|mogo/i.test(h);
     try { r = (pri || dd) ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
@@ -598,6 +635,7 @@
       all.replace(/\\\//g, '/').replace(MEDIA, function (m0) { push(m0); return m0; });
       all.replace(FILEKEY, function (m0, u) { u = u.replace(/\\\//g, '/'); if (!NOTMEDIA.test(u) && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) push(u); return m0; });
     }
+    if (!found.length && /"component"\s*:/.test(txt)) { try { await inertiaScan(txt, sv, push); } catch (e) { rep.push('inertia ' + String((e && e.message) || e).slice(0, 40)); } }
     if (!found.length) {                                    // one nested player page
       var nest = parse(txt).querySelector('iframe[src],iframe[data-src]');
       if (nest) {

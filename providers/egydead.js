@@ -806,7 +806,7 @@
     },
 
     getLinks: async function (cfg, target) {
-      var base = baseOf(cfg), page = target.url || target.id, rep = [];
+      var base = baseOf(cfg), page = target.url || target.id, rep = ['v0.3.4'];
       var lc = LC[page]; if (lc && Date.now() - lc.t < 240000) return lc.v;
       DQ = [];
       var html = await getHtml(page);

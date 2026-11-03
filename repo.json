@@ -31,7 +31,7 @@
       "name": "Witanime",
       "id": "witanime",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/witanime.js",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "language": "ar",
       "types": [
         "Anime",

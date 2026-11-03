@@ -625,9 +625,19 @@
       bnote = 'tok=' + (tok ? tok.slice(0, 8) : '-') + ' acc=' + accs.join(',') + ' path=' + pths.join(',') + ' mir=' + mirs.join(',') + ' dom=' + doms.join(',') + ' -> ' + cand.length;
       cand.forEach(function (u) { push(u, ''); });
     } catch (e) { bnote = 'error ' + String((e && e.message) || e).slice(0, 80); }
+    // the site lists its hosts as streams.data.N.mirrors.M.{driver,link}: remember them, each one is a normal embed page
+    sv._mirrors = [];
+    leaves.forEach(function (l) {
+      if (!/mirrors\.\d+\.link$/.test(l[0])) return;
+      var lk = l[1].replace(/\\\//g, '/'); if (/^\/\//.test(lk)) lk = 'https:' + lk;
+      if (!/^https?:\/\//i.test(lk)) return;
+      var dv = leaves.filter(function (x) { return x[0] === l[0].replace(/link$/, 'driver'); })[0];
+      if (!sv._mirrors.some(function (x) { return x.url === lk; })) sv._mirrors.push({ url: lk, name: dv ? dv[1] : '' });
+    });
+    bnote += ' mirrors=' + sv._mirrors.length;
     var KEYRE = /stream|mirror|token|domain|account|path|hls|uri|quality|source|cdn|server|host/i;
     var prio = leaves.filter(function (l) { return KEYRE.test(l[0]) && !/allow_domain|^p\.ads/.test(l[0]); });
-    DQ.push(['egydead ' + h, pnote + ' || ' + bnote + ' || ' + prio.map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 70); }).slice(0, 30).join(' ; ')]);
+    DQ.push(['egydead ' + h, pnote + ' || ' + bnote + ' || ' + prio.map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 70); }).slice(0, 6).join(' ; ')]);
   }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
@@ -635,7 +645,7 @@
     var r;
     var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
     var unk = /\/(?:e|iframe)\/[A-Za-z0-9_-]{8,}\/?$/.test(sv.url.split(/[?#]/)[0]) && !/ok\.ru|videa|vk\.|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|playmogo|filemoon|sendvid|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|hgcloud|hglink|haxloppd/i.test(h);
-    if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
+    if (/#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
     var dd = /dood|playmogo|ds2play|d000d|mogo/i.test(h);
     try { r = (pri || dd) ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
@@ -665,6 +675,15 @@
       all.replace(FILEKEY, function (m0, u) { u = u.replace(/\\\//g, '/'); if (!NOTMEDIA.test(u) && /\.(m3u8|mp4|mpd)|\/hls\/|master|playlist|\/stream/i.test(u)) push(u); return m0; });
     }
     if (!found.length && /"component"\s*:/.test(txt)) { try { await inertiaScan(txt, sv, push); } catch (e) { rep.push('inertia ' + String((e && e.message) || e).slice(0, 40)); } }
+    if (!found.length && sv._mirrors && sv._mirrors.length && !sv._sub) {
+      var ms = sv._mirrors.slice().sort(function (a, b) { return serverRank(a.url, a.name) - serverRank(b.url, b.name); }).slice(0, 6);
+      var subs = await Promise.all(ms.map(function (mm) {
+        return withTimeout(extractServer({ url: mm.url, name: mm.name, q: sv.q, _sub: 1 }, page, rep), 14000).catch(function (e2) { rep.push(host(mm.url).slice(0, 12) + ' ' + String((e2 && e2.message) || e2).slice(0, 20)); return []; });
+      }));
+      var subOut = []; subs.forEach(function (a) { a.forEach(function (g) { subOut.push(g); }); });
+      rep.push('mirrors ' + ms.length + ' -> ' + subOut.length);
+      if (subOut.length) return subOut;
+    }
     if (!found.length) {                                    // one nested player page
       var nest = parse(txt).querySelector('iframe[src],iframe[data-src]');
       if (nest) {
@@ -806,7 +825,7 @@
     },
 
     getLinks: async function (cfg, target) {
-      var base = baseOf(cfg), page = target.url || target.id, rep = ['v0.3.4'];
+      var base = baseOf(cfg), page = target.url || target.id, rep = ['v0.3.5'];
       var lc = LC[page]; if (lc && Date.now() - lc.t < 240000) return lc.v;
       DQ = [];
       var html = await getHtml(page);
@@ -832,7 +851,7 @@
       var lastB = live.filter(function (x) { return /mp4upload/.test(host(x.url)); }).slice(0, 2);
       async function runBatch(list) {                  // all servers of a batch are opened at the same time
         var res = await Promise.all(list.map(function (sv) {
-          return withTimeout(extractServer(sv, page, rep), 15000).then(function (got) {
+          return withTimeout(extractServer(sv, page, rep), 30000).then(function (got) {
             return got.map(function (g) { g.srv = host(sv.url); return g; });
           }, function (e) { rep.push(host(sv.url).slice(0, 12) + ' ' + String((e && e.message) || e).slice(0, 24)); return []; });
         }));

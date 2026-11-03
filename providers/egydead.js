@@ -11,6 +11,7 @@
 
   var SITE = '';
   var CARD_SEL = 'li.movieItem', TITLE_SEL = 'div.singleTitle em', POSTER_SEL = 'div.single-thumbnail img', SEASON_SEL = '/season/', WATCH_PAGE = true, SLUG_LAST = false;
+  var IMG_RELAY = false;
   var SELF = new RegExp('https?://(?:[a-z0-9-]+\\.)?egydead\\.[a-z]{2,10}(?![a-z0-9.-]*[a-z0-9])', 'gi');
   // ---------- small helpers ----------
   function baseOf(cfg) {
@@ -28,7 +29,7 @@
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function parse(html) { return new DOMParser().parseFromString(html, 'text/html'); }
   var REAL = '';
-  var HC = {}, HCN = 0, LC = {}, PREF = '', dumped = {};
+  var HC = {}, HCN = 0, LC = {}, PREF = '', dumped = {}, DQ = [], CARDDIAG = null;
   try { PREF = localStorage.getItem('egydead_pref') || ''; } catch (e) {}
   function withTimeout(p, ms) {
     return new Promise(function (res, rej) {
@@ -200,6 +201,14 @@
     if (!u) u = bgOf(img);
     return u && !/^data:/.test(u) ? abs(u, base) : '';
   }
+  function pimg(u) {
+    var p = MediaHub.proxy;
+    if (!IMG_RELAY || !u || !p || !p.url || u.indexOf(p.url) === 0 || !/^https?:/i.test(u)) return u;
+    var rf0 = (SITE || REAL || '').replace(/\/+$/, ''); if (!rf0) { try { rf0 = new URL(u).origin; } catch (e) {} }
+    return p.url + '/img.jpg?url=' + encodeURIComponent(u) + '&referer=' + encodeURIComponent(rf0 + '/') + (p.key ? '&key=' + encodeURIComponent(p.key) : '');
+  }
+  function pxItems(list) { list.forEach(function (it) { it.poster = pimg(it.poster); }); return list; }
+  function pxGroups(g) { g.forEach(function (x) { pxItems(x.items); }); return g; }
   function tidy(t) {
     return clean(String(t).replace(/^\s*(?:مشاهدة|تحميل|مشاهده)?\s*(?:فيلم|مسلسل|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?|اون لاين|أون لاين|كامل[ةه]?|بجودة.*|HD)\s*$/i, ''));
   }
@@ -518,6 +527,27 @@
     return out;
   }
 
+  function sourcesOf(txt) {
+    var out = [], re = /(?:video_)?sources?["']?\s*[:=]\s*\[/gi, m, T = String(txt);
+    while ((m = re.exec(T))) {
+      var st = m.index + m[0].length - 1, d = 0, q = '', i = st, esc = false;
+      for (; i < T.length && i < st + 20000; i++) {
+        var ch = T.charAt(i);
+        if (q) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === q) q = ''; }
+        else if (ch === '"' || ch === "'") q = ch;
+        else if (ch === '[' || ch === '{') d++;
+        else if (ch === ']' || ch === '}') { d--; if (!d) break; }
+      }
+      var arr; try { arr = JSON.parse(T.slice(st, i + 1)); } catch (e) { continue; }
+      if (!Array.isArray(arr)) continue;
+      arr.forEach(function (it) {
+        if (!it) return;
+        var u = typeof it === 'string' ? it : (it.src || it.file || it.url || it.source || '');
+        if (u && /^https?:|^\/\//.test(u) && !/\.(jpe?g|png|webp|gif|vtt|srt)(\?|$)/i.test(u)) out.push({ url: u.indexOf('//') === 0 ? 'https:' + u : u, q: String(it.label || it.quality || '').replace(/\s*premium/i, '').trim() });
+      });
+    }
+    return out;
+  }
   async function vidstackLinks(sv, page, rep) {
     var u; try { u = new URL(sv.url); } catch (e) { return []; }
     var id = u.hash.replace(/^#/, '') || (u.searchParams && (u.searchParams.get('id') || u.searchParams.get('v'))) || '';
@@ -556,6 +586,11 @@
       try { var dl = await doodLinks(txt, sv); if (dl) { rep.push(h + ' dood ok'); return [{ url: dl.url, q: '', relay: dl.relay, ref: dl.ref, name: sv.name, sq: sv.q }]; } }
       catch (e) { rep.push(h + ' dood: ' + (e && e.message)); }
     }
+    try {
+      sourcesOf(unent(txt) + unpackAll(unent(txt))).sort(function (a, b) { return (parseInt(b.q, 10) || 0) - (parseInt(a.q, 10) || 0); }).forEach(function (x) {
+        var qm = x.q.match(/\d{3,4}/); push(x.url, qm ? qm[0] + 'p' : '');
+      });
+    } catch (e) {}
     var vs = voeSource(txt);
     if (vs) push(vs);
     var all = unent(txt) + unpackAll(unent(txt)) + hiddenText(unent(txt));
@@ -575,9 +610,14 @@
     if (!found.length && txt.length >= 200 && !dumped[h]) {
       dumped[h] = 1;
       try {
-        var dp = unent(txt), dk = dp.search(/video_sources|["']sources["']|m3u8|\.mp4|fetch\(|\/api\/|token/i), dsr = [];
-        dp.replace(/<script[^>]*\ssrc=["']([^"']+)/gi, function (m0, s0) { dsr.push(s0.replace(/^https?:\/\//, '').slice(0, 40)); return m0; });
-        MediaHub.note('egydead page ' + h.slice(0, 14), (dk >= 0 ? dp.slice(Math.max(0, dk - 70), dk + 280) : dp.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/\s+/g, ' ').slice(0, 300)).replace(/\s+/g, ' ') + ' | scripts: ' + dsr.slice(0, 4).join(' , '));
+        var dp = unent(txt).replace(/<style[\s\S]*?<\/style>/gi, ''), dk = dp.search(/\/api\/|fetch\(|\.m3u8|\.mp4|sources?\s*[:=]|token/i), dsr = [], inl = '';
+        dp.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, function (m0, at, body) {
+          var sm = at.match(/src=["']([^"']+)/i);
+          if (sm) dsr.push(sm[1].replace(/^https?:\/\//, '').slice(0, 36)); else if (!inl && body.length > 40) inl = body.replace(/\s+/g, ' ').slice(0, 260);
+          return m0;
+        });
+        DQ.push(['egydead page ' + h.slice(0, 14) + ' ' + txt.length, dk >= 0 ? dp.slice(Math.max(0, dk - 80), dk + 300).replace(/\s+/g, ' ') : dp.replace(/\s+/g, ' ').slice(0, 300)]);
+        DQ.push(['egydead scripts ' + h.slice(0, 14), dsr.slice(0, 4).join(' , ') + ' || ' + inl]);
       } catch (e) {}
     }
     rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + (txt.length < 200 ? ' "' + txt.replace(/\s+/g, ' ').slice(0, 40) + '"' : '') + ' -> ' + found.length);
@@ -609,15 +649,19 @@
         throw new Error('No titles found at ' + base + ' - page "' + clean(t).slice(0, 50) + '", ' + html.length + ' chars' + (/just a moment|challenge-platform/i.test(html) ? ' [Cloudflare check]' : ''));
       }
       try {
-        var anyPic = g.some(function (x) { return x.items.some(function (i) { return i.poster; }); });
-        if (!anyPic && g[0] && g[0].items[0]) {
-          var f0 = g[0].items[0].url, d0 = parse(html), hit = null;
-          [].forEach.call(d0.querySelectorAll('a[href]'), function (a) { if (!hit && abs(a.getAttribute('href'), base) === f0) hit = a; });
-          var hp = hit && (hit.parentElement || hit);
-          MediaHub.note('egydead card', 'no pictures found; ' + (hp ? hp.outerHTML.replace(/\s+/g, ' ').slice(0, 380) : 'card not located'));
+        var fp0 = '', anyPic = g.some(function (x) { return x.items.some(function (it) { if (it.poster && !fp0) fp0 = it.poster; return it.poster; }); });
+        if (g[0] && g[0].items[0]) {
+          var hp = null;
+          if (!anyPic) {
+            var f0 = g[0].items[0].url, d0 = parse(html), hit = null;
+            [].forEach.call(d0.querySelectorAll('a[href]'), function (a) { if (!hit && abs(a.getAttribute('href'), base) === f0) hit = a; });
+            hp = hit && (hit.parentElement || hit);
+          }
+          CARDDIAG = ['egydead card', anyPic ? 'first picture: ' + fp0 : 'no pictures found; ' + (hp ? hp.outerHTML.replace(/\s+/g, ' ').slice(0, 380) : 'card not located')];
+          MediaHub.note(CARDDIAG[0], CARDDIAG[1]);
         }
       } catch (e) {}
-      return g.slice(0, 14);
+      return pxGroups(g.slice(0, 14));
     },
 
     search: async function (cfg, q) {
@@ -649,7 +693,7 @@
             try { var h2 = await getHtml(nx), extra2 = searchCards(h2, base), added = 0; extra2.forEach(function (x) { if (!seenS[x.id]) { seenS[x.id] = 1; out.push(x); added++; } }); if (!added) break; dS = parse(h2); uS = nx; } catch (e) { break; }
           }
           var onlyT = out.filter(function (x) { return !/\/episodes?\//i.test(x.url); });
-          return onlyT.length ? onlyT : out;
+          return pxItems(onlyT.length ? onlyT : out);
         } catch (e) { last = (e && e.message) + ' ' + urls[ui].replace(base, '').slice(0, 30); }
       }
       throw new Error('Search found nothing (' + tried.length + ' addresses tried; last: ' + last + ')');
@@ -692,7 +736,7 @@
       return {
         seasons: seasons.length > 1 ? seasons : undefined, currentSeason: seasons.length > 1 ? curK : undefined,
         title: item.title || pageTitle, series: cleanSeries(aTitle || pageTitle || item.title) || undefined,
-        poster: (pEl && imgUrl(pEl, aurl)) || posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image')), desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
+        poster: pimg((pEl && imgUrl(pEl, aurl)) || posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image'))), desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
         episodes: list
       };
     },
@@ -710,6 +754,7 @@
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
       var lc = LC[page]; if (lc && Date.now() - lc.t < 240000) return lc.v;
+      DQ = [];
       var html = await getHtml(page);
       if (WATCH_PAGE && !/\/watch\/?$/i.test(page)) {         // EgyDead keeps the servers on the /watch/ page of a title
         var wu = '';
@@ -751,6 +796,7 @@
         var good = links.filter(function (l, i2) { return oks[i2]; });
         if (good.length) links = good;
       }
+      if (!links.length) { if (CARDDIAG) DQ.push(CARDDIAG); DQ.forEach(function (x) { MediaHub.note(x[0], x[1]); }); DQ = []; }
       if (!links.length) throw new Error('No working server for this episode (' + servers.length + ' found) | ' + rep.join('; ').slice(0, 320));
       var seenLab = {};
       var outL = links.map(function (l) {

@@ -28,7 +28,10 @@
   async function smartText(url, opt) {
     opt = opt || {};
     try { return { t: await MediaHub.getText(url, Object.assign({}, opt, { direct: true })), relay: false }; }
-    catch (e1) { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
+    catch (e1) {
+      try { return { t: await MediaHub.getText(url, opt), relay: !!MediaHub.proxy }; }
+      catch (e2) { throw new Error('direct: ' + (e1 && e1.message) + ' | relay: ' + (e2 && e2.message)); }
+    }
   }
   function isJunk(u) {
     return /imdb|youtube|youtu\.be|ytimg|googlevideo|facebook|fbcdn|instagram|tiktok|twitter|vimeo|dailymotion|tmdb|themoviedb|myanimelist|anilist|fanart/i.test(host(u)) || /trailer|teaser|promo|\/ads?\//i.test(u);
@@ -363,9 +366,9 @@
       var animeUrl = isEp ? animePageLink(doc, url, h0) : url, ad = doc, aurl = url;
       if (isEp && animeUrl) { try { ad = parse(await getHtml(animeUrl)); aurl = animeUrl; } catch (e) { ad = doc; aurl = url; } }
       var seen = {}, list = [];
-      function addAll(ex) { ex.forEach(function (e) { if (seen[e.href]) return; seen[e.href] = 1; list.push({ id: e.href, url: e.href, title: e.t, n: epNum(dec(e.href) + ' ' + e.t) }); }); }
+      function addAll(ex) { ex.forEach(function (e) { if (seen[e.href]) return; seen[e.href] = 1; list.push({ id: e.href, url: e.href, title: e.t, ref: aurl, n: epNum(dec(e.href) + ' ' + e.t) }); }); }
       addAll(await collectEps(aurl, h0, ad));
-      if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, n: epNum(dec(url) + ' ' + pageTitle) }); } }
+      if (isEp) { addAll(extractEps(doc, url, h0)); if (!seen[url]) { seen[url] = 1; list.push({ id: url, url: url, title: pageTitle, ref: aurl, n: epNum(dec(url) + ' ' + pageTitle) }); } }
       list = list.map(function (e, i) { e.k = i; return e; });
       if (list.some(function (e) { return e.n > 0; })) list.sort(function (a, b) { return (a.n - b.n) || (a.k - b.k); });
       var seenN = {};
@@ -381,7 +384,14 @@
 
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, rep = [];
-      var html = await getHtml(page), doc = parse(html);
+      var html = '', errs = [];
+      var tries = [{}, { referer: base + '/' }, { referer: page.replace(/\/episode\/.*$/, '/') }];
+      if (target.ref) tries.splice(1, 0, { referer: target.ref });
+      for (var ti = 0; ti < tries.length && !html; ti++) {
+        try { html = (await smartText(page, tries[ti])).t; } catch (e) { errs.push((tries[ti].referer ? 'with referer ' : 'plain ') + (e && e.message)); }
+      }
+      if (!html) throw new Error('episode page refused: ' + errs.join(' ; ') + ' (' + dec(page.replace(base, '')).slice(0, 70) + ')');
+      var doc = parse(html);
       var servers = collectServers(doc, html, page);
       servers.sort(function (a, b) { return serverRank(a.url) - serverRank(b.url); });
       var links = [], tried = 0;

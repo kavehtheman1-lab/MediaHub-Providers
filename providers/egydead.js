@@ -577,17 +577,34 @@
     if (!m) return;
     var h = host(sv.url).slice(0, 12), obj, leaves = [];
     try { obj = JSON.parse(m[1]); } catch (e) { DQ.push(['egydead json ' + h, 'parse failed ' + String(m[1]).slice(0, 120)]); return; }
-    (function walk(v, path, d) {
-      if (d > 7 || leaves.length > 400) return;
-      if (v && typeof v === 'object') Object.keys(v).slice(0, 60).forEach(function (k) { walk(v[k], path + '.' + k, d + 1); });
-      else if (typeof v === 'string' || typeof v === 'number') leaves.push([path, String(v)]);
-    })(obj.props || obj, 'p', 0);
+    function collect(root, pre) {
+      (function walk(v, path, d) {
+        if (d > 7 || leaves.length > 500) return;
+        if (v && typeof v === 'object') Object.keys(v).slice(0, 60).forEach(function (k) { walk(v[k], path + '.' + k, d + 1); });
+        else if (typeof v === 'string' || typeof v === 'number') leaves.push([path, String(v)]);
+      })(root, pre, 0);
+    }
+    collect(obj.props || obj, 'p');
+    // the stream data (token, mirrors) is not in the first page: Inertia sends it on a partial reload, ask for it the way the site's own script does
+    var hasStreams = leaves.some(function (l) { return /^p\.streams/i.test(l[0]); }), pnote = '';
+    if (!hasStreams) {
+      var H = { 'X-Inertia': 'true', 'X-Inertia-Version': String(obj.version || ''), 'X-Inertia-Partial-Component': String(obj.component || ''), 'X-Inertia-Partial-Data': 'streams,mirrors,mirror,stream', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html, application/xhtml+xml' };
+      var pu = sv.url.replace(/#.*$/, ''), pt = '', perr = [];
+      try { pt = String(await MediaHub.getText(pu, { direct: true, headers: H })); } catch (e1) { perr.push('d ' + String((e1 && e1.message) || e1).slice(0, 24)); }
+      if (!/^\s*\{/.test(pt) && MediaHub.proxy) { try { pt = String(await MediaHub.getText(pu, { referer: sv.url, headers: H })); } catch (e2) { perr.push('r ' + String((e2 && e2.message) || e2).slice(0, 24)); } }
+      try {
+        var pj = JSON.parse(pt);
+        collect(pj.props || pj, 'p');
+        pnote = 'partial ok ' + String(pt.length) + ' keys=' + Object.keys(pj.props || {}).join(',');
+      } catch (e3) { pnote = 'partial fail ' + perr.join(' | ') + ' got "' + pt.replace(/\s+/g, ' ').slice(0, 50) + '"'; }
+    }
     var isMed = function (u) { return /\.(?:m3u8|mp4|mpd)(?![\w.-])/i.test(u); };
     leaves.forEach(function (l) {
       var v = l[1].replace(/\\\//g, '/');
       if ((/^https?:\/\//i.test(v) || /^\//.test(v)) && isMed(v)) push(abs(v, sv.url));
     });
     // ---- build the playlist address from the page data: template hls/{account}/{mirror}/{path}/master.m3u8 ----
+    var bnote = '';
     try {
       var lv = function (re, pre) { return leaves.filter(function (l) { return re.test(l[0].split('.').pop()) && (!pre || pre.test(l[0])); }).map(function (l) { return l[1]; }); };
       var uniq = function (a) { var sn = {}; return a.filter(function (x) { if (!x || sn[x]) return false; sn[x] = 1; return true; }); };
@@ -599,29 +616,18 @@
       var mirs = uniq(lv(/^(?:value|mirror)$/i, /mirror|server/i)).slice(0, 3); if (!mirs.length) mirs = [''];
       var doms = uniq(lv(/^(?:domain|host|cdn|base|url)$/i, /stream|mirror|server|cdn|hls/i).map(function (x) { return x.replace(/^https?:\/\//, '').replace(/\/.*$/, ''); })).slice(0, 3);
       var cand = [];
-      doms.forEach(function (dm) { accs.forEach(function (ac) { pths.forEach(function (pt) { mirs.forEach(function (mi) {
-        var u = tmpl.replace(/\{domain\}/g, dm).replace(/\{account\}/g, ac).replace(/\{mirror\}/g, mi).replace(/\{path\}/g, pt);
+      doms.forEach(function (dm) { accs.forEach(function (ac) { pths.forEach(function (pt2) { mirs.forEach(function (mi) {
+        var u = tmpl.replace(/\{domain\}/g, dm).replace(/\{account\}/g, ac).replace(/\{mirror\}/g, mi).replace(/\{path\}/g, pt2);
         u = /^https?:\/\//i.test(u) ? u : 'https://' + dm + '/' + u.replace(/^\//, '');
         if (tok) u += (u.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(tok);
         if (cand.length < 6) cand.push(u);
       }); }); }); });
-      DQ.push(['egydead build ' + h, 'tmpl=' + tmpl + ' tok=' + (tok ? tok.slice(0, 8) : '-') + ' acc=' + accs.join(',') + ' path=' + pths.join(',') + ' mir=' + mirs.join(',') + ' dom=' + doms.join(',') + ' -> ' + cand.length]);
+      bnote = 'tok=' + (tok ? tok.slice(0, 8) : '-') + ' acc=' + accs.join(',') + ' path=' + pths.join(',') + ' mir=' + mirs.join(',') + ' dom=' + doms.join(',') + ' -> ' + cand.length;
       cand.forEach(function (u) { push(u, ''); });
-    } catch (e) { DQ.push(['egydead build ' + h, 'error ' + String((e && e.message) || e).slice(0, 80)]); }
+    } catch (e) { bnote = 'error ' + String((e && e.message) || e).slice(0, 80); }
     var KEYRE = /stream|mirror|token|domain|account|path|hls|uri|quality|source|cdn|server|host/i;
-    var prio = leaves.filter(function (l) { return KEYRE.test(l[0]) && !/allow_domain|^p\.ads/.test(l[0]); }), rest = leaves.filter(function (l) { return prio.indexOf(l) < 0 && !/^p\.(config|ads)/.test(l[0]); });
-    DQ.push(['egydead json ' + h, prio.concat(rest).map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 60); }).slice(0, 30).join(' ; ')]);
-    // the player script knows which address it asks for the stream: list the paths it contains
-    var srcs = [];
-    txt.replace(/<(?:script|link)[^>]+(?:src|href)=["']([^"']+\.js[^"']*)["']/gi, function (m0, x) { var a = abs(x, sv.url); if (srcs.indexOf(a) < 0) srcs.push(a); return m0; });
-    var hits = [], seenH = {}, ctx = [];
-    for (var i = 0; i < srcs.length && i < 5; i++) {
-      var js; try { js = await MediaHub.getText(srcs[i], { direct: true }); } catch (e) { continue; }
-      js.replace(/["'`](\/[A-Za-z0-9_\-\/\.${}:]*(?:api|hls|stream|m3u8|mp4|playlist|source|embed|token|player|video|file)[A-Za-z0-9_\-\/\.${}:?=&]*)["'`]/gi, function (m0, x) { if (x.length > 3 && x.length < 60 && !seenH[x]) { seenH[x] = 1; hits.push(x); } return m0; });
-      if (ctx.length < 3) js.replace(/.{0,45}(?:\.m3u8|\.mp4|\.hashId|hashId).{0,45}/g, function (m0) { if (ctx.length < 3) ctx.push(m0.replace(/\s+/g, ' ')); return m0; });
-    }
-    DQ.push(['egydead js ' + srcs.length + ' ' + h, hits.slice(0, 26).join(' ')]);
-    if (ctx.length) DQ.push(['egydead ctx ' + h, ctx.join(' || ')]);
+    var prio = leaves.filter(function (l) { return KEYRE.test(l[0]) && !/allow_domain|^p\.ads/.test(l[0]); });
+    DQ.push(['egydead ' + h, pnote + ' || ' + bnote + ' || ' + prio.map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 70); }).slice(0, 30).join(' ; ')]);
   }
   async function extractServer(sv, page, rep) {
     var h = host(sv.url);
@@ -629,7 +635,7 @@
     var r;
     var pri = /anime4up|megamax|share4max/i.test(sv.name + ' ' + h), rf = realRef(page);
     var unk = /\/(?:e|iframe)\/[A-Za-z0-9_-]{8,}\/?$/.test(sv.url.split(/[?#]/)[0]) && !/ok\.ru|videa|vk\.|streamwish|wishfast|vidhide|filelions|voe\.|dood|mp4upload|playmogo|filemoon|sendvid|vidmoly|lulu|streamtape|uqload|mixdrop|upstream|dhcplay|minochinos|cybervynx|hgcloud|hglink|haxloppd/i.test(h);
-    if (pri || unk || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
+    if (pri || /#./.test(sv.url)) try { var vsl = await vidstackLinks(sv, page, rep); if (vsl.length) return vsl; } catch (e) { rep.push(h.slice(0, 12) + ' vs ' + String((e && e.message) || e).slice(0, 30)); }
     var dd = /dood|playmogo|ds2play|d000d|mogo/i.test(h);
     try { r = (pri || dd) ? await relayFirst(sv.url, { referer: rf }) : await smartText(sv.url, { referer: rf }); } catch (e) { rep.push(h.slice(0, 14) + ' ' + String((e && e.message) || e).slice(0, 40)); return []; }
     var txt = r.t, found = [], seen = {};
@@ -667,19 +673,6 @@
           try { var r2 = await smartText(nu, { referer: sv.url }), a2 = unent(r2.t) + unpackAll(unent(r2.t)) + hiddenText(unent(r2.t)); a2.replace(/\\\//g, '/').replace(MEDIA, function (m0) { push(m0); return m0; }); r.relay = r2.relay; } catch (e) {}
         }
       }
-    }
-    if (!found.length && txt.length >= 200 && !dumped[h]) {
-      dumped[h] = 1;
-      try {
-        var dp = unent(txt).replace(/<style[\s\S]*?<\/style>/gi, ''), dk = dp.search(/\/api\/|fetch\(|\.m3u8|\.mp4|sources?\s*[:=]|token/i), dsr = [], inl = '';
-        dp.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, function (m0, at, body) {
-          var sm = at.match(/src=["']([^"']+)/i);
-          if (sm) dsr.push(sm[1].replace(/^https?:\/\//, '').slice(0, 36)); else if (!inl && body.length > 40) inl = body.replace(/\s+/g, ' ').slice(0, 260);
-          return m0;
-        });
-        DQ.push(['egydead page ' + h.slice(0, 14) + ' ' + txt.length, dk >= 0 ? dp.slice(Math.max(0, dk - 80), dk + 300).replace(/\s+/g, ' ') : dp.replace(/\s+/g, ' ').slice(0, 300)]);
-        DQ.push(['egydead scripts ' + h.slice(0, 14), dsr.slice(0, 4).join(' , ') + ' || ' + inl]);
-      } catch (e) {}
     }
     rep.push(h + ' ' + txt.length + (r.relay ? ' r' : ' d') + (txt.length < 200 ? ' "' + txt.replace(/\s+/g, ' ').slice(0, 40) + '"' : '') + ' -> ' + found.length);
     return found.map(function (f) { return { url: f.url, q: f.q, relay: r.relay, ref: /ok\.ru/.test(h) ? 'https://ok.ru/' : sv.url, name: sv.name, sq: sv.q }; });
@@ -857,7 +850,7 @@
         var good = links.filter(function (l, i2) { return oks[i2]; });
         if (good.length) links = good;
       }
-      if (!links.length) { if (CARDDIAG) DQ.push(CARDDIAG); DQ.forEach(function (x) { MediaHub.note(x[0], x[1]); }); DQ = []; }
+      if (!links.length) { DQ.forEach(function (x) { MediaHub.note(x[0], x[1]); }); DQ = []; }
       if (!links.length) throw new Error('No working server for this episode (' + servers.length + ' found) | ' + rep.join('; ').slice(0, 320));
       var seenLab = {};
       var outL = links.map(function (l) {

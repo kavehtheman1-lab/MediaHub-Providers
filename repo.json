@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 12,
+  "version": 13,
   "providers": [
     {
       "name": "Tuktukcima",
@@ -30,7 +30,7 @@
       "name": "EgyDead",
       "id": "egydead",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/egydead.js",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "language": "ar",
       "types": [
         "Movie",

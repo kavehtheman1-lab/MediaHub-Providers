@@ -578,8 +578,8 @@
     var h = host(sv.url).slice(0, 12), obj, leaves = [];
     try { obj = JSON.parse(m[1]); } catch (e) { DQ.push(['egydead json ' + h, 'parse failed ' + String(m[1]).slice(0, 120)]); return; }
     (function walk(v, path, d) {
-      if (d > 6 || leaves.length > 90) return;
-      if (v && typeof v === 'object') Object.keys(v).slice(0, 40).forEach(function (k) { walk(v[k], path + '.' + k, d + 1); });
+      if (d > 7 || leaves.length > 400) return;
+      if (v && typeof v === 'object') Object.keys(v).slice(0, 60).forEach(function (k) { walk(v[k], path + '.' + k, d + 1); });
       else if (typeof v === 'string' || typeof v === 'number') leaves.push([path, String(v)]);
     })(obj.props || obj, 'p', 0);
     var isMed = function (u) { return /\.(?:m3u8|mp4|mpd)(?![\w.-])/i.test(u); };
@@ -587,7 +587,30 @@
       var v = l[1].replace(/\\\//g, '/');
       if ((/^https?:\/\//i.test(v) || /^\//.test(v)) && isMed(v)) push(abs(v, sv.url));
     });
-    DQ.push(['egydead json ' + h, leaves.map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 26); }).slice(0, 24).join(' ; ')]);
+    // ---- build the playlist address from the page data: template hls/{account}/{mirror}/{path}/master.m3u8 ----
+    try {
+      var lv = function (re, pre) { return leaves.filter(function (l) { return re.test(l[0].split('.').pop()) && (!pre || pre.test(l[0])); }).map(function (l) { return l[1]; }); };
+      var uniq = function (a) { var sn = {}; return a.filter(function (x) { if (!x || sn[x]) return false; sn[x] = 1; return true; }); };
+      var tok = lv(/^token$/i, /stream/i)[0] || lv(/^token$/i)[0] || '';
+      var tl = leaves.filter(function (l) { return /\{(?:account|mirror|path)\}/.test(l[1]); })[0];
+      var tmpl = tl ? tl[1] : 'hls/{account}/{mirror}/{path}/master.m3u8';
+      var accs = uniq(lv(/^account/i).concat(lv(/^user_id$/i))).slice(0, 2);
+      var pths = uniq(lv(/^path$/i).concat(lv(/^hashId$/i))).slice(0, 2);
+      var mirs = uniq(lv(/^(?:value|mirror)$/i, /mirror|server/i)).slice(0, 3); if (!mirs.length) mirs = [''];
+      var doms = uniq(lv(/^(?:domain|host|cdn|base|url)$/i, /stream|mirror|server|cdn|hls/i).map(function (x) { return x.replace(/^https?:\/\//, '').replace(/\/.*$/, ''); })).slice(0, 3);
+      var cand = [];
+      doms.forEach(function (dm) { accs.forEach(function (ac) { pths.forEach(function (pt) { mirs.forEach(function (mi) {
+        var u = tmpl.replace(/\{domain\}/g, dm).replace(/\{account\}/g, ac).replace(/\{mirror\}/g, mi).replace(/\{path\}/g, pt);
+        u = /^https?:\/\//i.test(u) ? u : 'https://' + dm + '/' + u.replace(/^\//, '');
+        if (tok) u += (u.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(tok);
+        if (cand.length < 6) cand.push(u);
+      }); }); }); });
+      DQ.push(['egydead build ' + h, 'tmpl=' + tmpl + ' tok=' + (tok ? tok.slice(0, 8) : '-') + ' acc=' + accs.join(',') + ' path=' + pths.join(',') + ' mir=' + mirs.join(',') + ' dom=' + doms.join(',') + ' -> ' + cand.length]);
+      cand.forEach(function (u) { push(u, ''); });
+    } catch (e) { DQ.push(['egydead build ' + h, 'error ' + String((e && e.message) || e).slice(0, 80)]); }
+    var KEYRE = /stream|mirror|token|domain|account|path|hls|uri|quality|source|cdn|server|host/i;
+    var prio = leaves.filter(function (l) { return KEYRE.test(l[0]) && !/allow_domain|^p\.ads/.test(l[0]); }), rest = leaves.filter(function (l) { return prio.indexOf(l) < 0 && !/^p\.(config|ads)/.test(l[0]); });
+    DQ.push(['egydead json ' + h, prio.concat(rest).map(function (l) { return l[0].replace(/^p\./, '') + '=' + l[1].replace(/\s+/g, ' ').slice(0, 60); }).slice(0, 30).join(' ; ')]);
     // the player script knows which address it asks for the stream: list the paths it contains
     var srcs = [];
     txt.replace(/<(?:script|link)[^>]+(?:src|href)=["']([^"']+\.js[^"']*)["']/gi, function (m0, x) { var a = abs(x, sv.url); if (srcs.indexOf(a) < 0) srcs.push(a); return m0; });

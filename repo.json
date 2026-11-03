@@ -42,7 +42,7 @@
       "name": "Anime4up",
       "id": "anime4up",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/anime4up.js",
-      "version": "0.1.8",
+      "version": "0.1.9",
       "language": "ar",
       "types": [
         "Anime",

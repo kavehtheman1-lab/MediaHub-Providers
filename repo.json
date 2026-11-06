@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 23,
+  "version": 24,
   "providers": [
     {
       "name": "Tuktukcima",
@@ -67,7 +67,7 @@
       "name": "Shoffree",
       "id": "shoffree",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/shoffree.js",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "language": "ar",
       "types": [
         "Movie",

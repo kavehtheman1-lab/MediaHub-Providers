@@ -21,7 +21,21 @@
   function clean(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
   function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
   function parse(h) { return new DOMParser().parseFromString(h, 'text/html'); }
-  function getHtml(u, o) { return MediaHub.getText(u, o); }
+  function getHtml(u, o) {
+    // retry transient server/relay errors (5xx, timeouts) a couple of times
+    var tries = 0;
+    function go() {
+      return MediaHub.getText(u, o).catch(function (e) {
+        var m = String(e && e.message || e);
+        if (tries < 2 && /HTTP 5\d\d|Failed to fetch|NetworkError|timeout/i.test(m)) {
+          tries++;
+          return new Promise(function (r) { setTimeout(r, 1500 * tries); }).then(go);
+        }
+        throw e;
+      });
+    }
+    return go();
+  }
   function metaOf(d, p) { var m = d.querySelector('meta[property="' + p + '"],meta[name="' + p + '"]'); return m ? m.getAttribute('content') : ''; }
   function unent(t) { return String(t).replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); }
   function diag(html, url) {

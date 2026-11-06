@@ -132,6 +132,51 @@
     return out.join(' // ') || 'no keywords';
   }
 
+
+  // ---------- the site's own player data: `config` + `rawData` globals (read from all.js) ----------
+  function grabObj(text, name) {
+    var re = new RegExp('(?:^|[^A-Za-z0-9_$.])(?:var |let |const |window\\.)?' + name + '\\s*=\\s*', 'g'), m;
+    while ((m = re.exec(text))) {
+      var i = re.lastIndex, ch = text.charAt(i), raw = '';
+      if (text.substr(i, 11) === 'JSON.parse(') { i += 11; ch = text.charAt(i); }
+      if (ch === '{' || ch === '[') {
+        var d = 0, q = '', k = i;
+        for (; k < text.length; k++) {
+          var c = text.charAt(k);
+          if (q) { if (c === '\\') k++; else if (c === q) q = ''; continue; }
+          if (c === '"' || c === "'" || c === '`') q = c;
+          else if (c === '{' || c === '[') d++;
+          else if (c === '}' || c === ']') { d--; if (!d) { raw = text.slice(i, k + 1); break; } }
+        }
+      } else if (ch === '"' || ch === "'") {
+        var k2 = i + 1;
+        for (; k2 < text.length; k2++) { if (text.charAt(k2) === '\\') k2++; else if (text.charAt(k2) === ch) break; }
+        raw = text.slice(i, k2 + 1);
+      }
+      if (!raw) continue;
+      try { var v = JSON.parse(raw); if (typeof v === 'string') v = JSON.parse(v); return v; } catch (e1) {}
+      try { var v2 = (new Function('return (' + raw + ')'))(); if (typeof v2 === 'string') v2 = JSON.parse(v2); return v2; } catch (e2) {}
+    }
+    return null;
+  }
+  function playerUrls(text) {
+    var cfg = grabObj(text, 'config'), raw = grabObj(text, 'rawData'), out = [], dis = [];
+    if (cfg && cfg.disabledServers && cfg.disabledServers.forEach) cfg.disabledServers.forEach(function (x) { dis.push(String(x).toLowerCase()); });
+    function ok(u) { u = String(u || '').trim(); if (!u) return false; var l = u.toLowerCase(); return !dis.some(function (x) { return x && l.indexOf(x) >= 0; }); }
+    if (cfg) {
+      if (cfg.server_local && cfg.Domain_local) {
+        var u1 = cfg.type_item === 'serie' ? '' + cfg.Domain_local + cfg.type_item + '/' + cfg.id_item + '/' + cfg.currentId : '' + cfg.Domain_local + cfg.type_item + '/' + cfg.currentId;
+        if (ok(u1)) out.push(u1);
+      }
+      if (cfg.showVidplay && cfg.vidplay_id) { var u2 = '' + cfg.vidplayDomain + cfg.vidplay_id; if (ok(u2)) out.push(u2); }
+    }
+    var one = raw && (raw.episodes && raw.episodes.filter ? raw.episodes.filter(function (e) { return cfg && e.episode_id == cfg.currentId; })[0] : (raw.details || raw));
+    var emb = one && (Array.isArray(one) ? one : one.embeds) || [];
+    if (typeof emb === 'string') { try { emb = JSON.parse(emb); } catch (e) { emb = []; } }
+    if (emb && emb.forEach) emb.forEach(function (e) { if (e && ok(e.url)) out.push(String(e.url).trim()); });
+    return { urls: out, hasCfg: !!cfg, hasRaw: !!raw };
+  }
+
   MediaHub.registerProvider({
     id: 'shoffree',
     name: 'Shoffree',
@@ -224,6 +269,15 @@
       var html = await getHtml(page), doc = parse(html);
       report.push('page ' + html.length);
       var all = scan(html);
+      var pu = playerUrls(html);
+      report.push('config ' + (pu.hasCfg ? 'yes' : 'no') + ' rawData ' + (pu.hasRaw ? 'yes' : 'no') + ' servers ' + pu.urls.length);
+      pu.urls.forEach(function (u) {
+        u = abs(u, page);
+        if (/^https?:/i.test(u) && !seenE[u]) {
+          seenE[u] = 1;
+          if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(u)) addDirect(u); else embeds.push({ u: u, ref: page, d: 0 });
+        }
+      });
       [].forEach.call(doc.querySelectorAll('iframe'), function (n) { addEmbed(n.getAttribute('src') || n.getAttribute('data-src'), page); });
       [].forEach.call(doc.querySelectorAll('[data-url],[data-embed],[data-src],[data-link],[data-server],[data-video],video source[src],video[src]'), function (n) {
         var u = n.getAttribute('data-url') || n.getAttribute('data-embed') || n.getAttribute('data-link') || n.getAttribute('data-video') || n.getAttribute('data-src') || n.getAttribute('src') || '';
@@ -266,7 +320,7 @@
           cand(m2[1].replace(/\$\{[^}]*\}/g, id));
           if (kind) { var k = 0; cand(m2[1].replace(/\$\{[^}]*\}/g, function () { return k++ === 0 ? kind : id; })); }
         }
-        var tried = cands.slice(0, 16), htmlN = 0, okL = [];
+        var tried = cands.slice(0, 16), htmlN = 0, okL = [], snips = [];
         report.push('id ' + (id || '-') + ' kind ' + (kind || '-') + ', scripts ' + srcs.length + ', candidates ' + cands.length);
         await Promise.all(tried.map(async function (u) {
           try {
@@ -276,8 +330,10 @@
             if (js) jsonUrls(js, [], 0).forEach(function (x) { if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(x)) addDirect(x); else addEmbed(x, page); });
             scan(t);
             okL.push(u.replace(base, '').slice(0, 45) + ' ' + t.length);
+            snips.push(u.replace(base, '').slice(0, 30) + ' => ' + clean(t).slice(0, 330));
           } catch (e) { /* skip */ }
         }));
+        snips.slice(0, 3).forEach(function (x, i) { MediaHub.note('shoffree body ' + (i + 1), x); });
         report.push('api json/text: ' + (okL.join(', ') || 'none') + ' (html ignored ' + htmlN + ')');
         if (!direct.length) {
           // what the site's scripts and page look like (shown as separate lines in Diagnostics)
@@ -299,6 +355,8 @@
           var cfgs = (html.match(/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi) || []).map(function (x) { return clean(x.replace(/<\/?script[^>]*>/gi, '')); })
             .filter(function (x) { return /Options|window\.[A-Za-z_]+\s*=|player|stream|server/i.test(x) && !/session_bridge|iframe-injection|googletag|adsbygoogle/i.test(x); });
           cfgs.slice(0, 3).forEach(function (x, i) { MediaHub.note('shoffree inline ' + (i + 1) + '/' + cfgs.length + ' (' + x.length + ')', x.slice(0, 420)); });
+          var ix = html.search(/rawData|\bconfig\s*=/);
+          MediaHub.note('shoffree cfg', (ix < 0 ? 'no rawData/config in page html' : clean(html.slice(Math.max(0, ix - 40), ix + 300))));
           MediaHub.note('shoffree page', 'data: ' + Object.keys(dattr).slice(0, 18).join(',') + ' | ids: ' + (ids.join(',') || 'none'));
           report.push('tried: ' + (tried.slice(0, 6).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', ') || 'none'));
           var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON)|\.open)\s*\(\s*([^)]{0,110})/g, mc;

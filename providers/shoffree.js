@@ -275,10 +275,15 @@
             if (js) jsonUrls(js, [], 0).forEach(function (x) { if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(x)) addDirect(x); else addEmbed(x, page); });
             scan(t);
             okL.push(u.replace(base, '').slice(0, 45) + ' ' + t.length);
+            if (okL.length <= 3) MediaHub.note('shoffree reply ' + u.replace(base, '').slice(0, 40), clean(t).slice(0, 230));
           } catch (e) { /* skip */ }
         }));
         report.push('api json/text: ' + (okL.join(', ') || 'none') + ' (html ignored ' + htmlN + ')');
         if (!direct.length) {
+          ['/ajax', '/playlist'].forEach(function (needle) {
+            var src = jsTexts.join('\n') + '\n' + html, i = src.indexOf(needle), shown = 0;
+            while (i >= 0 && shown < 1) { MediaHub.note('shoffree js ' + needle, clean(src.slice(Math.max(0, i - 100), i + 140))); shown++; i = src.indexOf(needle, i + 1); }
+          });
           report.push('tried: ' + (tried.slice(0, 6).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', ') || 'none'));
           var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON)|\.open)\s*\(\s*([^)]{0,110})/g, mc;
           var alljs = jsTexts.join('\n') + '\n' + html;

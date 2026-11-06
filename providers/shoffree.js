@@ -272,9 +272,17 @@
         return all;
       }
       var html = await getHtml(page), doc = parse(html);
+      // the watch page only holds a fake player: the real one comes back from a POST of its key_token
+      var kt = html.match(/name=["']key_token["'][^>]*value=["']([^"']+)["']/i) || html.match(/value=["']([^"']+)["'][^>]*name=["']key_token["']/i);
+      if (kt) {
+        try {
+          var h2 = await getHtml(page, { method: 'POST', referer: page, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'key_token=' + encodeURIComponent(kt[1]) });
+          report.push('token post ' + h2.length);
+          html = h2; doc = parse(html);
+        } catch (e3) { report.push('token post failed ' + String(e3 && e3.message || e3).slice(0, 40)); }
+      } else { report.push('no key_token'); }
       report.push('page ' + html.length);
       var all = scan(html);
-      MediaHub.note('shoffree watch', page.replace(base, '') + ' | ' + ['server-container', 'video-iframe', 'rawData', 'episode_id', 'embeds', 'disabledServers', 'vidplay'].map(function (k) { return k + ':' + (html.indexOf(k) >= 0 ? 'Y' : 'n'); }).join(' '));
       var pu = playerUrls(html);
       report.push('config ' + (pu.hasCfg ? 'yes' : 'no') + ' rawData ' + (pu.hasRaw ? 'yes' : 'no') + ' servers ' + pu.urls.length);
       report.push('flags ' + ['server-container', 'video-iframe', 'episode_id', 'embeds', 'vidplay', 'application/json', 'atob(', 'JSON.parse'].map(function (k) { return k + ':' + (html.indexOf(k) >= 0 ? 'Y' : 'n'); }).join(' ') + ' inlineScripts ' + (html.match(/<script(?![^>]*\bsrc=)/gi) || []).length);

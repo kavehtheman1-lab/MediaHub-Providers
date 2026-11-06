@@ -296,6 +296,9 @@
           while ((md = rd.exec(html))) dattr[md[1].toLowerCase()] = 1;
           var ids = [], ri = /\sid=["']([^"']*(?:player|video|server|watch|embed|stream)[^"']*)["']/gi, mi;
           while ((mi = ri.exec(html)) && ids.length < 8) ids.push(mi[1]);
+          var cfgs = (html.match(/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi) || []).map(function (x) { return clean(x.replace(/<\/?script[^>]*>/gi, '')); })
+            .filter(function (x) { return /Options|window\.[A-Za-z_]+\s*=|player|stream|server/i.test(x) && !/session_bridge|iframe-injection|googletag|adsbygoogle/i.test(x); });
+          cfgs.slice(0, 3).forEach(function (x, i) { MediaHub.note('shoffree inline ' + (i + 1) + '/' + cfgs.length + ' (' + x.length + ')', x.slice(0, 420)); });
           MediaHub.note('shoffree page', 'data: ' + Object.keys(dattr).slice(0, 18).join(',') + ' | ids: ' + (ids.join(',') || 'none'));
           report.push('tried: ' + (tried.slice(0, 6).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', ') || 'none'));
           var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON)|\.open)\s*\(\s*([^)]{0,110})/g, mc;

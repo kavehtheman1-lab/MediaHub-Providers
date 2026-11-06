@@ -416,6 +416,16 @@
           });
         }
         if (!direct.length && fetched === 1) elog.push('PEEK ' + clean(txt).slice(0, 300));
+        if (!direct.length && fetched === 1) {
+          try {
+            var scs = [], rs = /<script([^>]*)>([\s\S]*?)<\/script>/gi, mm, srcs2 = [];
+            while ((mm = rs.exec(txt))) { var sm = mm[1].match(/src=["']([^"']+)["']/i); if (sm) srcs2.push(sm[1].replace(/^https?:\/\//, '').slice(0, 60)); else if (mm[2].length > 30) scs.push(mm[2]); }
+            var ps = scs.filter(function (x) { return /_payload|_key/.test(x); })[0] || scs.sort(function (x, y) { return y.length - x.length; })[0] || '';
+            var cz = clean(ps.replace(/[A-Za-z0-9+\/=_\-]{100,}/g, function (m9) { return '[B64:' + m9.length + ']'; }).replace(/(\d+\s*,\s*){30,}\d+/g, '[NUMS]'));
+            MediaHub.note('PS info', 'scripts ' + scs.length + ' main ' + ps.length + ' compressed ' + cz.length + ' ext ' + srcs2.join(' , '));
+            for (var ci = 0; ci < 6 && ci * 520 < cz.length; ci++) MediaHub.note('PS ' + (ci + 1), cz.slice(ci * 520, ci * 520 + 520));
+          } catch (e6) { MediaHub.note('PS err', e6); }
+        }
       }
 
       if (!direct.length) throw new Error('No video link. ' + elog.join(' ; ') + ' ## ' + report.join(' ; '));

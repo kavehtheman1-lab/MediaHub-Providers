@@ -249,7 +249,12 @@
 
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, report = [];
-      page = page.replace('/movie/', '/watch/');       // movies: the details page -> its player page
+      if (/\/movie\//i.test(page)) {                    // movies: follow the real Watch link on the details page
+        var dh = '', wl = '';
+        try { dh = await getHtml(page); var dd = parse(dh).querySelectorAll('a[href*="/watch/"]'); if (dd.length) wl = abs(dd[0].getAttribute('href'), base); } catch (e0) {}
+        report.push('watch link ' + (wl ? wl.replace(base, '').slice(0, 50) : 'none'));
+        page = wl || page.replace('/movie/', '/watch/');
+      }
       var direct = [], embeds = [], seenE = {}, labels = {};
       function addDirect(u, lab) { u = abs(String(u).replace(/\\\//g, '/'), page); if (u && !NOTMEDIA.test(u) && direct.indexOf(u) < 0) { direct.push(u); if (lab) labels[u] = lab; } }
       function addEmbed(u, from) {
@@ -269,6 +274,7 @@
       var html = await getHtml(page), doc = parse(html);
       report.push('page ' + html.length);
       var all = scan(html);
+      MediaHub.note('shoffree watch', page.replace(base, '') + ' | ' + ['server-container', 'video-iframe', 'rawData', 'episode_id', 'embeds', 'disabledServers', 'vidplay'].map(function (k) { return k + ':' + (html.indexOf(k) >= 0 ? 'Y' : 'n'); }).join(' '));
       var pu = playerUrls(html);
       report.push('config ' + (pu.hasCfg ? 'yes' : 'no') + ' rawData ' + (pu.hasRaw ? 'yes' : 'no') + ' servers ' + pu.urls.length);
       pu.urls.forEach(function (u) {

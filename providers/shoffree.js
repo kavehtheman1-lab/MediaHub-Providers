@@ -147,6 +147,25 @@
   }
 
 
+
+  // the /streem/ player page is a tiny loader: document.write(atob(xor_hex(_payload, _key))) -> do the same
+  function xorHex(data, pwd) {
+    var pairs = data.match(/.{1,2}/g), out = [], i;
+    if (!pairs) return '';
+    for (i = 0; i < pairs.length; i++) out.push(String.fromCharCode(parseInt(pairs[i], 16) ^ pwd.charCodeAt(i % pwd.length)));
+    return out.join('');
+  }
+  function unwrapOnce(txt) {
+    var m = txt.match(/\}\)\(\s*(["'])([^"'\\]{4,80})\1\s*,\s*(["'])([0-9a-fA-F]{100,})\3\s*\)/);
+    if (!m) return '';
+    try { return decodeURIComponent(escape(atob(xorHex(m[4], m[2])))); } catch (e) { return ''; }
+  }
+  function unwrapAll(txt) {
+    var cur = txt, got = '', n = 0, d;
+    while (n < 4 && (d = unwrapOnce(cur))) { got = d; cur = d; n++; }
+    return got;
+  }
+
   // ---------- the site's own player data: `config` + `rawData` globals (read from all.js) ----------
   function grabObj(text, name) {
     var re = new RegExp('(?:^|[^A-Za-z0-9_$.])(?:var |let |const |window\\.)?' + name + '\\s*=\\s*', 'g'), m;
@@ -420,6 +439,8 @@
         try { txt = await getHtml(q.u, { referer: q.ref }); }
         catch (e1) { try { txt = await getHtml(q.u, { referrerPolicy: 'no-referrer' }); } catch (e2) { elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ' + (e1 && e1.message ? e1.message.slice(0, 40) : '') + ' / ' + (e2 && e2.message ? e2.message.slice(0, 40) : '')); continue; } }
         elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ok ' + txt.length);
+        var decoded = unwrapAll(txt);
+        if (decoded) { elog.push('DEC ' + decoded.length); txt = decoded + '\n' + txt; }
         var before = direct.length;
         scan(txt, q.u);
         for (var di = before; di < direct.length; di++) labels[direct[di]] = host(q.u);
@@ -434,7 +455,7 @@
           try {
             var scs = [], rs = /<script([^>]*)>([\s\S]*?)<\/script>/gi, mm, srcs2 = [];
             while ((mm = rs.exec(txt))) { var sm = mm[1].match(/src=["']([^"']+)["']/i); if (sm) srcs2.push(sm[1].replace(/^https?:\/\//, '').slice(0, 60)); else if (mm[2].length > 30) scs.push(mm[2]); }
-            var ps = scs.filter(function (x) { return /_payload|_key/.test(x); })[0] || scs.sort(function (x, y) { return y.length - x.length; })[0] || '';
+            var ps = scs.filter(function (x) { return !/_payload\s*\)/.test(x.slice(0, 80)); }).sort(function (x, y) { return y.length - x.length; })[0] || scs[0] || '';
             var cz = clean(ps.replace(/[A-Za-z0-9+\/=_\-]{100,}/g, function (m9) { return '[B64:' + m9.length + ']'; }).replace(/(\d+\s*,\s*){30,}\d+/g, '[NUMS]'));
             MediaHub.note('PS info', 'scripts ' + scs.length + ' main ' + ps.length + ' compressed ' + cz.length + ' ext ' + srcs2.join(' , '));
             for (var ci = 0; ci < 6 && ci * 520 < cz.length; ci++) MediaHub.note('PS ' + (ci + 1), cz.slice(ci * 520, ci * 520 + 520));

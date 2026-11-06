@@ -282,9 +282,33 @@
 
     getLinks: async function (cfg, target) {
       var base = baseOf(cfg), page = target.url || target.id, report = [];
+      // cookie jar: the site's player session lives in a cookie that the relay hands back as x-up-cookie
+      var jar = {};
+      function jarStr() { var o = [], k; for (k in jar) o.push(k + '=' + jar[k]); return o.join('; '); }
+      async function jget(u, o) {
+        o = o || {};
+        var tries = 0;
+        for (;;) {
+          var h = {}, o2 = {}, k, cs = jarStr();
+          for (k in (o.headers || {})) h[k] = o.headers[k];
+          if (cs && MediaHub.proxy) h['X-Cookie'] = cs;
+          for (k in o) o2[k] = o[k];
+          o2.headers = h; if (!o2.referer) o2.referer = page;
+          try {
+            var r = await MediaHub.req(u, o2);
+            var sc = r.headers.get('x-up-cookie');
+            if (sc) sc.split(/;\s*/).forEach(function (p) { var i = p.indexOf('='); if (i > 0) jar[p.slice(0, i)] = p.slice(i + 1); });
+            return await r.text();
+          } catch (e) {
+            var m = String(e && e.message || e);
+            if (tries < 2 && /HTTP 5\d\d|Failed to fetch|NetworkError|timeout/i.test(m)) { tries++; await new Promise(function (res) { setTimeout(res, 1500 * tries); }); continue; }
+            throw e;
+          }
+        }
+      }
       if (/\/movie\//i.test(page)) {                    // movies: follow the real Watch link on the details page
         var dh = '', wl = '';
-        try { dh = await getHtml(page); var dd = parse(dh).querySelectorAll('a[href*="/watch/"]'); if (dd.length) wl = abs(dd[0].getAttribute('href'), base); } catch (e0) {}
+        try { dh = await jget(page); var dd = parse(dh).querySelectorAll('a[href*="/watch/"]'); if (dd.length) wl = abs(dd[0].getAttribute('href'), base); } catch (e0) {}
         report.push('watch link ' + (wl ? wl.replace(base, '').slice(0, 50) : 'none'));
         page = wl || page.replace('/movie/', '/watch/');
       }
@@ -304,12 +328,12 @@
         });
         return all;
       }
-      var html = await getHtml(page), doc = parse(html);
+      var html = await jget(page), doc = parse(html);
       // the watch page only holds a fake player: the real one comes back from a POST of its key_token
       var kt = html.match(/name=["']key_token["'][^>]*value=["']([^"']+)["']/i) || html.match(/value=["']([^"']+)["'][^>]*name=["']key_token["']/i);
       if (kt) {
         try {
-          var h2 = await getHtml(page, { method: 'POST', referer: page, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'key_token=' + encodeURIComponent(kt[1]) });
+          var h2 = await jget(page, { method: 'POST', referer: page, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'key_token=' + encodeURIComponent(kt[1]) });
           report.push('token post ' + h2.length);
           html = h2; doc = parse(html);
         } catch (e3) { report.push('token post failed ' + String(e3 && e3.message || e3).slice(0, 40)); }
@@ -436,9 +460,9 @@
       while (embeds.length && fetched < 8 && direct.length < 3) {
         var q = embeds.shift(); fetched++;
         var txt;
-        try { txt = await getHtml(q.u, { referer: q.ref }); }
+        try { txt = await jget(q.u, { referer: q.ref }); }
         catch (e1) { try { txt = await getHtml(q.u, { referrerPolicy: 'no-referrer' }); } catch (e2) { elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ' + (e1 && e1.message ? e1.message.slice(0, 40) : '') + ' / ' + (e2 && e2.message ? e2.message.slice(0, 40) : '')); continue; } }
-        elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ok ' + txt.length);
+        elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ok ' + txt.length + ' cookies ' + Object.keys(jar).join(','));
         var decoded = unwrapAll(txt);
         if (decoded) { elog.push('DEC ' + decoded.length); txt = decoded + '\n' + txt; }
         // the decoded player asks /streem/sources/... (POST key + server) for its JSON source list
@@ -448,7 +472,7 @@
             var api = q.u.replace('watch', 'sources');
             for (var sn = 1; sn <= 4 && !direct.length; sn++) {
               try {
-                var jt = await getHtml(api, { method: 'POST', referer: q.u, headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/javascript, */*; q=0.01' }, body: 'key=' + encodeURIComponent(km[1]) + '&server=' + sn });
+                var jt = await jget(api, { method: 'POST', referer: q.u, headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/javascript, */*; q=0.01' }, body: 'key=' + encodeURIComponent(km[1]) + '&server=' + sn });
                 elog.push('SRC' + sn + ' ' + clean(jt).slice(0, 150));
                 var jo = null; try { jo = JSON.parse(jt); } catch (e8) {}
                 if (jo && jo.sources) [].concat(jo.sources).forEach(function (x) { var f = typeof x === 'string' ? x : (x && (x.file || x.src || x.url)); if (f) addDirect(f, x && typeof x.label === 'string' ? x.label : ''); });

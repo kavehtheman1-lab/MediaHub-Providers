@@ -399,13 +399,13 @@
       }
 
       // open the embeds (and the iframes inside them)
-      var fetched = 0;
+      var fetched = 0, elog = [];
       while (embeds.length && fetched < 8 && direct.length < 3) {
         var q = embeds.shift(); fetched++;
         var txt;
         try { txt = await getHtml(q.u, { referer: q.ref }); }
-        catch (e1) { try { txt = await getHtml(q.u, { referrerPolicy: 'no-referrer' }); } catch (e2) { report.push(host(q.u) + ' ' + (e1 && e1.message ? e1.message.slice(0, 30) : '')); continue; } }
-        report.push(host(q.u) + ' ' + txt.length);
+        catch (e1) { try { txt = await getHtml(q.u, { referrerPolicy: 'no-referrer' }); } catch (e2) { elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ' + (e1 && e1.message ? e1.message.slice(0, 40) : '') + ' / ' + (e2 && e2.message ? e2.message.slice(0, 40) : '')); continue; } }
+        elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ok ' + txt.length);
         var before = direct.length;
         scan(txt, q.u);
         for (var di = before; di < direct.length; di++) labels[direct[di]] = host(q.u);
@@ -415,10 +415,10 @@
             if (/^https?:/i.test(u2) && !FILEHOSTS.test(host(u2)) && !seenE[u2]) { seenE[u2] = 1; embeds.push({ u: u2, ref: q.u, d: q.d + 1 }); }
           });
         }
-        if (!direct.length && fetched === 1) report.push('peek ' + peek(txt).slice(0, 260));
+        if (!direct.length && fetched === 1) elog.push('PEEK ' + clean(txt).slice(0, 300));
       }
 
-      if (!direct.length) throw new Error('No video link. ' + report.join(' ; '));
+      if (!direct.length) throw new Error('No video link. ' + elog.join(' ; ') + ' ## ' + report.join(' ; '));
       return direct.map(function (u, n) {
         return { url: u, label: (labels[u] || 'Server ' + (n + 1)) + ' \u00B7 ' + host(u).split('.').slice(-2).join('.'), referer: page, relay: false };
       });

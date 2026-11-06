@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 27,
+  "version": 25,
   "providers": [
     {
       "name": "Tuktukcima",
@@ -67,25 +67,13 @@
       "name": "Shoffree",
       "id": "shoffree",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/shoffree.js",
-      "version": "0.1.8",
+      "version": "0.1.9",
       "language": "ar",
       "types": [
         "Movie",
         "TvSeries",
         "Anime",
         "AsianDrama"
-      ]
-    },
-    {
-      "name": "Stremio addon",
-      "id": "stremio",
-      "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/stremio.js",
-      "version": "0.1.1",
-      "language": "en",
-      "types": [
-        "Movie",
-        "TvSeries",
-        "Anime"
       ]
     }
   ]

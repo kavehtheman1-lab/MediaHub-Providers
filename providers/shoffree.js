@@ -282,6 +282,19 @@
         } catch (e3) { report.push('token post failed ' + String(e3 && e3.message || e3).slice(0, 40)); }
       } else { report.push('no key_token'); }
       report.push('page ' + html.length);
+      try {
+        var vf = doc.getElementById('video-iframe') || doc.querySelector('[id*="video-iframe"]');
+        if (vf) {
+          var vo = clean(vf.outerHTML || '').slice(0, 420);
+          MediaHub.note('shoffree vf', vo);
+          for (var ai = 0; ai < vf.attributes.length; ai++) {
+            var av = String(vf.attributes[ai].value || '').trim(), au = '';
+            if (/^(https?:)?\/\//i.test(av)) au = av;
+            else if (/^[A-Za-z0-9+\/=_-]{24,}$/.test(av)) { try { var dv = atob(av.replace(/-/g, '+').replace(/_/g, '/')); if (/^(https?:)?\/\//i.test(dv)) au = dv; } catch (e4) {} }
+            if (au) { au = abs(au, page); if (!seenE[au]) { seenE[au] = 1; if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(au)) addDirect(au); else embeds.push({ u: au, ref: page, d: 0 }); } }
+          }
+        }
+      } catch (e5) {}
       var all = scan(html);
       var pu = playerUrls(html);
       report.push('config ' + (pu.hasCfg ? 'yes' : 'no') + ' rawData ' + (pu.hasRaw ? 'yes' : 'no') + ' servers ' + pu.urls.length);

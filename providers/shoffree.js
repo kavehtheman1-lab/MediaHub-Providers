@@ -248,6 +248,7 @@
           if (u && host(u) === host(base) && !/jquery|bootstrap|swiper|analytics|gtag/i.test(u)) srcs.push(u);
         });
         var jsTexts = await Promise.all(srcs.slice(0, 8).map(function (u) { return getHtml(u, { referer: page }).catch(function () { return ''; }); }));
+        jsTexts = jsTexts.map(function (t) { return t + '\n' + unpackAll(t) + decodeB64(t); });
         var blob = all + '\n' + jsTexts.join('\n');
         scan(jsTexts.join('\n'));
         var KW = '(?:api|ajax|server|servers|player|embed|source|sources|stream|playlist)';
@@ -275,15 +276,27 @@
             if (js) jsonUrls(js, [], 0).forEach(function (x) { if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(x)) addDirect(x); else addEmbed(x, page); });
             scan(t);
             okL.push(u.replace(base, '').slice(0, 45) + ' ' + t.length);
-            if (okL.length <= 3) MediaHub.note('shoffree reply ' + u.replace(base, '').slice(0, 40), clean(t).slice(0, 230));
           } catch (e) { /* skip */ }
         }));
         report.push('api json/text: ' + (okL.join(', ') || 'none') + ' (html ignored ' + htmlN + ')');
         if (!direct.length) {
-          ['/ajax', '/playlist'].forEach(function (needle) {
-            var src = jsTexts.join('\n') + '\n' + html, i = src.indexOf(needle), shown = 0;
-            while (i >= 0 && shown < 1) { MediaHub.note('shoffree js ' + needle, clean(src.slice(Math.max(0, i - 100), i + 140))); shown++; i = src.indexOf(needle, i + 1); }
+          // what the site's scripts and page look like (shown as separate lines in Diagnostics)
+          var info = srcs.map(function (u, i) {
+            var t = jsTexts[i] || '';
+            return u.split('/').pop().split('?')[0] + ' ' + t.length + (/eval\(function\(p,a,c,k/.test(t) ? ' packed' : '') + ((t.match(/_0x[0-9a-f]{3,6}/g) || []).length > 20 ? ' obf' : '');
           });
+          MediaHub.note('shoffree scripts', info.join(' | '));
+          var paths = [], seenP = {}, rp = /["'`](\/[A-Za-z0-9_\-\/.?=&]{3,60})["'`]/g, mp, js2 = jsTexts.join('\n');
+          while ((mp = rp.exec(js2)) && paths.length < 16) {
+            var pp = mp[1]; if (seenP[pp] || /^\/(assets|\/)|\.(css|png|jpe?g|svg|webp|gif|ico|woff2?)(\?|$)/i.test(pp)) continue;
+            seenP[pp] = 1; paths.push(pp);
+          }
+          MediaHub.note('shoffree js paths', paths.join(' '));
+          var dattr = {}, rd = /\sdata-([a-z0-9-]+)=/gi, md;
+          while ((md = rd.exec(html))) dattr[md[1].toLowerCase()] = 1;
+          var ids = [], ri = /\sid=["']([^"']*(?:player|video|server|watch|embed|stream)[^"']*)["']/gi, mi;
+          while ((mi = ri.exec(html)) && ids.length < 8) ids.push(mi[1]);
+          MediaHub.note('shoffree page', 'data: ' + Object.keys(dattr).slice(0, 18).join(',') + ' | ids: ' + (ids.join(',') || 'none'));
           report.push('tried: ' + (tried.slice(0, 6).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', ') || 'none'));
           var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON)|\.open)\s*\(\s*([^)]{0,110})/g, mc;
           var alljs = jsTexts.join('\n') + '\n' + html;

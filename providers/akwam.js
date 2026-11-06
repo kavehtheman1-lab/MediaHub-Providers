@@ -254,22 +254,23 @@
       });
       report.push('watch ' + watch.length + ', download ' + dl.length);
 
-      for (var i = 0; i < watch.length && i < 6; i++) {
+      // 1) watch pages - all fetched at the same time
+      await Promise.all(watch.slice(0, 6).map(async function (w, i) {
         try {
-          var wh = await getHtml(watch[i].u, { referer: page }), wd = parse(wh), q = watch[i].q;
+          var wh = await getHtml(w.u, { referer: page }), wd = parse(wh), q = w.q;
           [].forEach.call(wd.querySelectorAll('source[src], video[src]'), function (n) {
-            var s = abs(n.getAttribute('src'), watch[i].u), nq = +(latin(n.getAttribute('size') || n.getAttribute('label') || n.getAttribute('title') || '').match(/\d{3,4}/) || [0])[0];
-            add(s, nq || q, watch[i].u);
+            var s = abs(n.getAttribute('src'), w.u), nq = +(latin(n.getAttribute('size') || n.getAttribute('label') || n.getAttribute('title') || '').match(/\d{3,4}/) || [0])[0];
+            add(s, nq || q, w.u);
           });
-          scan(wh, q, watch[i].u);
+          scan(wh, q, w.u);
           [].forEach.call(wd.querySelectorAll('iframe[src],iframe[data-src]'), function (f) {
-            var fu = abs(f.getAttribute('src') || f.getAttribute('data-src'), watch[i].u);
-            if (fu && !/youtube|youtu\.be/i.test(fu)) dl.push({ u: fu, q: q, ref: watch[i].u });
+            var fu = abs(f.getAttribute('src') || f.getAttribute('data-src'), w.u);
+            if (fu && !/youtube|youtu\.be/i.test(fu)) dl.push({ u: fu, q: q, ref: w.u });
           });
         } catch (e) { report.push('watch ' + i + ': ' + (e && e.message)); }
-      }
+      }));
 
-      // 2) download pages -> direct mp4 (often through downet.net)
+      // 2) download pages -> direct mp4 (often through downet.net), also in parallel
       var seenD = {};
       async function follow(entry, depth) {
         if (!entry.u || seenD[entry.u] || depth > 2 || found.length >= 8) return;
@@ -286,20 +287,23 @@
         [].forEach.call(d.querySelectorAll("a[href*='/download/']"), function (a) {
           var u = abs(a.getAttribute('href'), entry.u); if (u && host(u) === host(base)) next.push({ u: u, q: q, ref: entry.u });
         });
-        for (var j = 0; j < next.length && j < 4; j++) await follow(next[j], depth + 1);
+        await Promise.all(next.slice(0, 4).map(function (n) { return follow(n, depth + 1); }));
       }
-      for (var k = 0; k < dl.length && k < 6 && found.length < 6; k++) await follow(dl[k], 0);
+      await Promise.all(dl.slice(0, 6).map(function (e) { return follow(e, 0); }));
 
       if (!found.length) throw new Error('No video link. ' + report.join(' ; ') + ' | page ' + page.slice(-40) + ' ' + html.length + ' chars');
       found.sort(function (a, b) { return b.q - a.q; });
-      // downet.net's HTTPS certificate is broken (HTTP 526 / connection failed), so try plain http first, then https
-      var list = [];
-      found.forEach(function (f) {
-        if (/^https:\/\/[^\/]*downet\.net\//i.test(f.url)) list.push({ url: f.url.replace(/^https:/i, 'http:'), q: f.q, ref: f.ref, tag: ' (http)' });
-        list.push({ url: f.url, q: f.q, ref: f.ref, tag: '' });
+      // one link per quality (the same quality shows up on several pages)
+      var uniq = [], seenQ = {};
+      found.forEach(function (f) { var k = f.q || f.url; if (!seenQ[k]) { seenQ[k] = 1; uniq.push(f); } });
+      // downet.net's HTTPS certificate is broken (HTTP 526 / connection failed), so use plain http, keeping one https copy as the last fallback
+      var list = uniq.slice(0, 4).map(function (f) {
+        var isD = /^https:\/\/[^\/]*downet\.net\//i.test(f.url);
+        return { url: isD ? f.url.replace(/^https:/i, 'http:') : f.url, q: f.q, ref: f.ref };
       });
+      if (/^https:\/\/[^\/]*downet\.net\//i.test(uniq[0].url)) list.push({ url: uniq[0].url, q: uniq[0].q, ref: uniq[0].ref });
       return list.map(function (f, n) {
-        return { url: f.url, label: (f.q ? f.q + 'p' : 'Server ' + (n + 1)) + ' \u00B7 ' + host(f.url).split('.').slice(-2).join('.') + f.tag, referer: f.ref, relay: false };
+        return { url: f.url, label: (f.q ? f.q + 'p' : 'Server ' + (n + 1)) + ' \u00B7 ' + host(f.url).split('.').slice(-2).join('.') + (/^http:/i.test(f.url) ? '' : ' (https)'), referer: f.ref, relay: false };
       });
     }
   });

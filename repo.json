@@ -67,7 +67,7 @@
       "name": "Shoffree",
       "id": "shoffree",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/shoffree.js",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "language": "ar",
       "types": [
         "Movie",

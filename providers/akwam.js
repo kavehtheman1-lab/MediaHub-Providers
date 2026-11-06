@@ -292,8 +292,14 @@
 
       if (!found.length) throw new Error('No video link. ' + report.join(' ; ') + ' | page ' + page.slice(-40) + ' ' + html.length + ' chars');
       found.sort(function (a, b) { return b.q - a.q; });
-      return found.map(function (f, n) {
-        return { url: f.url, label: (f.q ? f.q + 'p' : 'Server ' + (n + 1)) + ' \u00B7 ' + host(f.url).split('.').slice(-2).join('.'), referer: f.ref, relay: false };
+      // downet.net's HTTPS certificate is broken (HTTP 526 / connection failed), so try plain http first, then https
+      var list = [];
+      found.forEach(function (f) {
+        if (/^https:\/\/[^\/]*downet\.net\//i.test(f.url)) list.push({ url: f.url.replace(/^https:/i, 'http:'), q: f.q, ref: f.ref, tag: ' (http)' });
+        list.push({ url: f.url, q: f.q, ref: f.ref, tag: '' });
+      });
+      return list.map(function (f, n) {
+        return { url: f.url, label: (f.q ? f.q + 'p' : 'Server ' + (n + 1)) + ' \u00B7 ' + host(f.url).split('.').slice(-2).join('.') + f.tag, referer: f.ref, relay: false };
       });
     }
   });

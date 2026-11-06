@@ -250,11 +250,12 @@
         var jsTexts = await Promise.all(srcs.slice(0, 8).map(function (u) { return getHtml(u, { referer: page }).catch(function () { return ''; }); }));
         var blob = all + '\n' + jsTexts.join('\n');
         scan(jsTexts.join('\n'));
-        var KW = '(?:api|ajax|server|servers|player|embed|source|sources|stream|link|links|watch|video|play|episode|movie)';
+        var KW = '(?:api|ajax|server|servers|player|embed|source|sources|stream|playlist)';
         var re1 = new RegExp('["\'`]((?:https?:\\/\\/[^"\'`\\s]*)?\\/[A-Za-z0-9_\\-\\/.]*' + KW + '[A-Za-z0-9_\\-\\/.?=&]*)["\'`]', 'gi'), m1;
         while ((m1 = re1.exec(blob)) && cands.length < 40) {
           var pth = m1[1];
-          if (/\/(download|serie|series|movies|anime|person|episodes|playlist|history|plans|signin)(\/|$)/i.test(pth) && !/api|ajax/i.test(pth)) continue;
+          if (/\/(movie|watch|download|serie|series|movies|anime|person|episodes|history|plans|signin|assets)\//i.test(pth) && !/api|ajax/i.test(pth)) continue;
+          if (/-\d{4}(\/|$)/.test(pth)) continue;
           cand(pth);
           if (id) { var pb = pth.replace(/\/?$/, '/'); cand(pb + id); if (kind) cand(pb + kind + '/' + id); }
         }
@@ -269,7 +270,7 @@
         await Promise.all(tried.map(async function (u) {
           try {
             var t = await getHtml(u, { referer: page, headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/plain, */*' } });
-            if (/^\s*</.test(t)) { htmlN++; return; }                // the site answers unknown paths with a web page
+            if (/^[\s\uFEFF]*</.test(t) || /<html|<!doctype/i.test(t.slice(0, 400))) { htmlN++; return; }                // the site answers unknown paths with a web page
             var js = null; try { js = JSON.parse(t); } catch (e) {}
             if (js) jsonUrls(js, [], 0).forEach(function (x) { if (/\.(m3u8|mp4|mpd)(\?|$)/i.test(x)) addDirect(x); else addEmbed(x, page); });
             scan(t);
@@ -277,11 +278,16 @@
           } catch (e) { /* skip */ }
         }));
         report.push('api json/text: ' + (okL.join(', ') || 'none') + ' (html ignored ' + htmlN + ')');
-        if (!direct.length && !embeds.length) {
-          report.push('tried: ' + tried.slice(0, 8).map(function (u) { return u.replace(base, '').slice(0, 36); }).join(', '));
-          var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON))\s*\(\s*([^)]{0,110})/g, mc;
-          while ((mc = rc.exec(jsTexts.join('\n') + '\n' + html)) && calls.length < 4) calls.push(clean(mc[1]).slice(0, 90));
-          report.push('calls: ' + (calls.join(' | ') || 'none') + ' | js: ' + srcs.slice(0, 4).map(function (u) { return u.split('/').pop().slice(0, 22); }).join(','));
+        if (!direct.length) {
+          report.push('tried: ' + (tried.slice(0, 6).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', ') || 'none'));
+          var calls = [], rc = /(?:fetch|axios\.(?:get|post)|\$\.(?:ajax|get|post|getJSON)|\.open)\s*\(\s*([^)]{0,110})/g, mc;
+          var alljs = jsTexts.join('\n') + '\n' + html;
+          while ((mc = rc.exec(alljs)) && calls.length < 4) calls.push(clean(mc[1]).slice(0, 80));
+          report.push('calls: ' + (calls.join(' | ') || 'none'));
+          report.push('js: ' + srcs.slice(0, 5).map(function (u) { return u.replace(base, '').slice(0, 30); }).join(', '));
+          var inl = (html.match(/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi) || []).map(function (x) { return clean(x.replace(/<\/?script[^>]*>/gi, '')); })
+            .filter(function (x) { return x.length > 40 && /server|embed|player|source|stream|api|iframe/i.test(x) && !/session_bridge|iframe-injection|googletag|adsbygoogle/i.test(x); });
+          report.push('inline: ' + (inl.slice(0, 3).map(function (x) { return x.slice(0, 140); }).join(' || ') || 'none'));
         }
       }
 

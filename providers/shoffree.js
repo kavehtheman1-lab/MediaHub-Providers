@@ -441,6 +441,23 @@
         elog.push('EMB ' + q.u.replace(/^https?:\/\//, '').slice(0, 50) + ' ok ' + txt.length);
         var decoded = unwrapAll(txt);
         if (decoded) { elog.push('DEC ' + decoded.length); txt = decoded + '\n' + txt; }
+        // the decoded player asks /streem/sources/... (POST key + server) for its JSON source list
+        if (decoded) {
+          var km = decoded.match(/\bKEY\s*=\s*['"]([^'"]+)['"]/);
+          if (km && !direct.length) {
+            var api = q.u.replace('watch', 'sources');
+            for (var sn = 1; sn <= 4 && !direct.length; sn++) {
+              try {
+                var jt = await getHtml(api, { method: 'POST', referer: q.u, headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/javascript, */*; q=0.01' }, body: 'key=' + encodeURIComponent(km[1]) + '&server=' + sn });
+                elog.push('SRC' + sn + ' ' + clean(jt).slice(0, 150));
+                var jo = null; try { jo = JSON.parse(jt); } catch (e8) {}
+                if (jo && jo.sources) [].concat(jo.sources).forEach(function (x) { var f = typeof x === 'string' ? x : (x && (x.file || x.src || x.url)); if (f) addDirect(f, x && typeof x.label === 'string' ? x.label : ''); });
+                if (!direct.length) scan(jt, q.u);
+                if (jo && jo.more_server && !direct.length) { elog.push('MORE ' + JSON.stringify(jo.more_server).slice(0, 160)); break; }
+              } catch (e7) { elog.push('SRC' + sn + ' err ' + String(e7 && e7.message || e7).slice(0, 50)); }
+            }
+          } else if (!km) { elog.push('no KEY'); }
+        }
         var before = direct.length;
         scan(txt, q.u);
         for (var di = before; di < direct.length; di++) labels[direct[di]] = host(q.u);

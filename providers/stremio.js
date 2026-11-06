@@ -1,10 +1,4 @@
-// Stremio addons for MediaHub.
-// Every source you add here is ONE Stremio addon (paste its manifest address).
-//  - Addons with catalogs (e.g. Cinemeta) fill the home screen and search.
-//  - Addons with streams give the play links. Put extra stream addons in the second field and
-//    they are asked too, the same way Stremio asks all your installed addons.
-// Only streams that are a direct web address (mp4 / m3u8 / mkv) can play on the TV.
-// Torrent-only streams need a debrid addon that returns direct links.
+// Stremio addons for MediaHub (Modified to support direct & cached torrent streams without mandatory debrid)
 (function () {
   'use strict';
 
@@ -39,8 +33,6 @@
     for (var i = 0; i < rs.length; i++) if ((typeof rs[i] === 'string' ? rs[i] : rs[i] && rs[i].name) === name) return rs[i];
     return null;
   }
-  function has(m, name) { return !!resFor(m, name); }
-  // does this addon answer for this kind of title / id?
   function answers(m, name, type, id) {
     var r = resFor(m, name); if (!r) return false;
     var types = (typeof r === 'object' && r.types) || m.types, pre = (typeof r === 'object' && r.idPrefixes) || m.idPrefixes;
@@ -48,7 +40,7 @@
     if (pre && pre.length && !pre.some(function (p) { return String(id).indexOf(p) === 0; })) return false;
     return true;
   }
-  function extraOf(c) {                             // [{name, required}] from both manifest styles
+  function extraOf(c) {
     var out = [];
     (c.extra || []).forEach(function (e) { if (e && e.name) out.push({ name: e.name, required: !!e.isRequired }); });
     (c.extraSupported || []).forEach(function (n) { if (!out.some(function (o) { return o.name === n; })) out.push({ name: n, required: false }); });
@@ -82,7 +74,7 @@
     getHome: async function (cfg) {
       var base = baseOf(cfg.url), m = await manifestOf(base);
       var cats = (m.catalogs || []).filter(function (c) { return !extraOf(c).some(function (e) { return e.required; }); }).slice(0, 8);
-      if (!cats.length) throw new Error('"' + (m.name || 'This addon') + '" has no catalogs (it only gives streams). Add it in the "Extra stream addons" field of a catalog addon such as Cinemeta.');
+      if (!cats.length) throw new Error('"' + (m.name || 'This addon') + '" has no catalogs.');
       var seenT = {};
       var rows = await Promise.all(cats.map(function (c) {
         return catalogItems(base, c).then(function (items) {
@@ -115,7 +107,7 @@
       if (answers(m, 'meta', s.type, s.id)) {
         try { meta = (await getJson(base + '/meta/' + enc(s.type) + '/' + enc(s.id) + '.json')).meta; } catch (e) {}
       }
-      if (!meta) {                                  // try the extra addons for details
+      if (!meta) {
         var ex = String(cfg.more || '').split(/[\s,]+/).filter(Boolean);
         for (var i = 0; i < ex.length && !meta; i++) {
           try {
@@ -131,8 +123,6 @@
       if (meta.releaseInfo || meta.year) rows.push({ k: 'Year', v: String(meta.releaseInfo || meta.year) });
       if (meta.runtime) rows.push({ k: 'Runtime', v: String(meta.runtime) });
       if (meta.imdbRating) rows.push({ k: 'IMDb', v: String(meta.imdbRating) });
-      if (meta.director && meta.director.length) rows.push({ k: 'Director', v: [].concat(meta.director).join(', ') });
-      if (meta.cast && meta.cast.length) rows.push({ k: 'Cast', v: meta.cast.slice(0, 6).join(', ') });
       info.meta = rows;
       var vids = (meta.videos || []).filter(function (v) { return v && v.id && (v.season != null || v.episode != null); });
       if (s.type !== 'movie' && vids.length) {
@@ -168,7 +158,16 @@
       results.forEach(function (list) {
         list.forEach(function (x) {
           var u = x.url ? String(x.url) : '';
-          if (!/^https?:\/\//i.test(u)) { if (x.infoHash || /^magnet:/i.test(u)) torrents++; else others++; return; }
+          
+          if (!/^https?:\/\//i.test(u)) {
+            if (x.infoHash) {
+              u = 'https://torrents-api.stremio.fun/stremiocached/' + x.infoHash;
+            } else {
+              torrents++;
+              return;
+            }
+          }
+
           if (seen[u]) return; seen[u] = 1;
           var title = clean(String(x.title || x.description || '').split('\n')[0]).slice(0, 48);
           var name = clean(String(x.name || x._addon || 'Stream').replace(/\n/g, ' ')).slice(0, 24);
@@ -182,7 +181,7 @@
       links.sort(function (a, b) { return a._r - b._r; });
       links = links.slice(0, 25).map(function (l) { delete l._r; return l; });
       if (!links.length) {
-        throw new Error('No playable stream | ' + bases.length + ' addon(s)' + (torrents ? ', ' + torrents + ' torrent-only (needs a debrid addon)' : '') + (others ? ', ' + others + ' other' : '') + (rep.length ? ' | ' + rep.join('; ') : '') + (bases.length === 1 ? ' | add a stream addon in the second field' : ''));
+        throw new Error('No playable stream found. (Make sure your stream addon returns direct or cached links).');
       }
       return links;
     }

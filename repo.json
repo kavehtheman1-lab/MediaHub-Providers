@@ -1,7 +1,7 @@
 {
   "name": "MediaHub Providers",
   "description": "JavaScript providers for the MediaHub Samsung Tizen app.",
-  "version": 17,
+  "version": 18,
   "providers": [
     {
       "name": "Tuktukcima",
@@ -54,7 +54,7 @@
       "name": "Akwam",
       "id": "akwam",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/akwam.js",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "language": "ar",
       "types": [
         "Movie",

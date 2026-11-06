@@ -277,6 +277,7 @@
       MediaHub.note('shoffree watch', page.replace(base, '') + ' | ' + ['server-container', 'video-iframe', 'rawData', 'episode_id', 'embeds', 'disabledServers', 'vidplay'].map(function (k) { return k + ':' + (html.indexOf(k) >= 0 ? 'Y' : 'n'); }).join(' '));
       var pu = playerUrls(html);
       report.push('config ' + (pu.hasCfg ? 'yes' : 'no') + ' rawData ' + (pu.hasRaw ? 'yes' : 'no') + ' servers ' + pu.urls.length);
+      report.push('flags ' + ['server-container', 'video-iframe', 'episode_id', 'embeds', 'vidplay', 'application/json', 'atob(', 'JSON.parse'].map(function (k) { return k + ':' + (html.indexOf(k) >= 0 ? 'Y' : 'n'); }).join(' ') + ' inlineScripts ' + (html.match(/<script(?![^>]*\bsrc=)/gi) || []).length);
       pu.urls.forEach(function (u) {
         u = abs(u, page);
         if (/^https?:/i.test(u) && !seenE[u]) {

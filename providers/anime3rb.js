@@ -208,6 +208,33 @@
   }
   function pxItems(list) { list.forEach(function (it) { it.poster = pimg(it.poster); }); return list; }
   function pxGroups(g) { g.forEach(function (x) { pxItems(x.items); }); return g; }
+  // The site's own picture paths (anime3rb.com/<id>/<id>.jpg) are refused by the relay's image endpoint, but the relay
+  // fetches the pages themselves fine - so pictures are fetched the same way and handed to the TV as local blob: addresses.
+  var BLOBS = {};
+  async function blobOne(u) {
+    if (BLOBS[u]) return BLOBS[u];
+    var ref = (SITE || REAL || '').replace(/\/+$/, '');
+    if (!ref) { try { ref = new URL(u).origin; } catch (e) {} }
+    var r = await withTimeout(MediaHub.req(u, { referer: ref + '/', headers: { 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' } }), 9000);
+    var bl = await r.blob();
+    if (!bl || !bl.size || (bl.type && !/^image\//i.test(bl.type))) throw new Error('not an image (' + (bl && bl.type) + ' ' + (bl && bl.size) + ')');
+    return (BLOBS[u] = URL.createObjectURL(bl));
+  }
+  async function blobItems(items, ms) {
+    items.forEach(function (it) { if (it.poster && BLOBS[it.poster]) it.poster = BLOBS[it.poster]; });
+    var todo = items.filter(function (it) { return it.poster && /^https?:/i.test(it.poster); }).slice(0, 36);
+    var n = 0, fail = 0, first = '';
+    async function worker() {
+      while (n < todo.length) {
+        var it = todo[n++];
+        try { it.poster = await blobOne(it.poster); } catch (e) { fail++; if (!first) first = String(e && e.message || e).slice(0, 70); }
+      }
+    }
+    var ws = []; for (var k = 0; k < 6; k++) ws.push(worker());
+    await Promise.race([Promise.all(ws), new Promise(function (r) { setTimeout(r, ms || 6000); })]);
+    try { MediaHub.note('anime3rb pics', todo.length + ' tried, ' + fail + ' failed' + (first ? ': ' + first : '')); } catch (e) {}
+    return items;
+  }
   function tidy(t) {
     return clean(String(t).replace(/^\s*(?:مشاهدة|تحميل|مشاهده)?\s*(?:فيلم|مسلسل|انمي|أنمي|برنامج)\s+/i, '').replace(/\s*(?:مترجم[ةه]?|مدبلج[ةه]?|اون لاين|أون لاين|كامل[ةه]?|بجودة.*|HD)\s*$/i, ''));
   }
@@ -618,7 +645,10 @@
           MediaHub.note(CARDDIAG[0], CARDDIAG[1]);
         }
       } catch (e) {}
-      return pxGroups(g.slice(0, 14));
+      var gg = g.slice(0, 14), flat = [];
+      gg.forEach(function (x) { x.items.forEach(function (i) { flat.push(i); }); });
+      await blobItems(flat, 6000);
+      return pxGroups(gg);
     },
 
     search: async function (cfg, q) {
@@ -649,6 +679,7 @@
             var nx = nextLink(dS, uS, host(base)); if (!nx || nx === uS) break;
             try { var h2 = await getHtml(nx), extra2 = searchCards(h2, base), added = 0; extra2.forEach(function (x) { if (!seenS[x.id]) { seenS[x.id] = 1; out.push(x); added++; } }); if (!added) break; dS = parse(h2); uS = nx; } catch (e) { break; }
           }
+          await blobItems(out, 6000);
           return pxItems(out);
         } catch (e) { last = (e && e.message) + ' ' + urls[ui].replace(base, '').slice(0, 30); }
       }
@@ -693,10 +724,12 @@
       }
       var aTitle = ad !== doc ? h1Of(ad) : '';
       var pEl = POSTER_SEL ? ad.querySelector(POSTER_SEL) : null;
+      var pu0 = (pEl && imgUrl(pEl, aurl)) || posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image'));
+      if (pu0 && /^https?:/i.test(pu0) && !(MediaHub.proxy && MediaHub.proxy.url && pu0.indexOf(MediaHub.proxy.url) === 0)) { try { pu0 = await blobOne(pu0); } catch (e) {} }
       return {
         seasons: seasons.length > 1 ? seasons : undefined, currentSeason: seasons.length > 1 ? curK : undefined,
         title: item.title || pageTitle, series: cleanSeries(aTitle || pageTitle || item.title) || undefined,
-        poster: pimg((pEl && imgUrl(pEl, aurl)) || posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image'))), desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
+        poster: pimg(pu0), desc: synopsis(ad), genres: genresOf(ad), meta: infoRows(ad),
         episodes: list
       };
     },

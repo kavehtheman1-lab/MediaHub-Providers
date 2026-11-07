@@ -202,37 +202,86 @@
   }
   function pimg(u) {
     var p = MediaHub.proxy;
-    if (!IMG_RELAY || !u || !p || !p.url || u.indexOf(p.url) === 0 || !/^https?:/i.test(u)) return u;
+    if (!IMG_RELAY || !u || !p || !p.url || u.indexOf(p.url) === 0 || !/^https?:/i.test(u) || /kitsu\./i.test(u)) return u;
     var rf0 = (SITE || REAL || '').replace(/\/+$/, ''); if (!rf0) { try { rf0 = new URL(u).origin; } catch (e) {} }
     return p.url + '/img.jpg?url=' + encodeURIComponent(u) + '&referer=' + encodeURIComponent(rf0 + '/') + (p.key ? '&key=' + encodeURIComponent(p.key) : '');
   }
   function pxItems(list) { list.forEach(function (it) { it.poster = pimg(it.poster); }); return list; }
   function pxGroups(g) { g.forEach(function (x) { pxItems(x.items); }); return g; }
-  // The site's own picture paths (anime3rb.com/<id>/<id>.jpg) are refused by the relay's image endpoint, but the relay
-  // fetches the pages themselves fine - so pictures are fetched the same way and handed to the TV as local blob: addresses.
-  var BLOBS = {};
+  // The site's own picture paths (anime3rb.com/<id>/<id>.jpg) answer 403 to the relay's image endpoint.
+  // Step 1: fetch them like a page, carrying the session cookie the relay hands back (x-up-cookie -> X-Cookie).
+  // Step 2: pictures the site still refuses are looked up by title on Kitsu (open API, picture loads without any referer).
+  var BLOBS = {}, JAR = null, SITEBAD = false, OKN = 0, FAILN = 0, KC = {};
+  try { KC = JSON.parse(localStorage.getItem('anime3rb_kitsu') || '{}') || {}; } catch (e) {}
+  function jarStr() { var o = [], k; for (k in (JAR || {})) o.push(k + '=' + JAR[k]); return o.join('; '); }
+  async function cookieJar() {
+    if (JAR) return JAR;
+    JAR = {};
+    try {
+      var ref = (SITE || REAL || '').replace(/\/+$/, '');
+      var r = await withTimeout(MediaHub.req(ref + '/', { referer: ref + '/' }), 12000);
+      var sc = r.headers.get('x-up-cookie');
+      if (sc) sc.split(/;\s*/).forEach(function (q) { var i = q.indexOf('='); if (i > 0 && !/^(path|domain|expires|max-age|samesite|secure|httponly)$/i.test(q.slice(0, i))) JAR[q.slice(0, i)] = q.slice(i + 1); });
+    } catch (e) {}
+    return JAR;
+  }
   async function blobOne(u) {
     if (BLOBS[u]) return BLOBS[u];
     var ref = (SITE || REAL || '').replace(/\/+$/, '');
     if (!ref) { try { ref = new URL(u).origin; } catch (e) {} }
-    var r = await withTimeout(MediaHub.req(u, { referer: ref + '/', headers: { 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' } }), 9000);
-    var bl = await r.blob();
-    if (!bl || !bl.size || (bl.type && !/^image\//i.test(bl.type))) throw new Error('not an image (' + (bl && bl.type) + ' ' + (bl && bl.size) + ')');
+    var cs = jarStr(), tries = [], bl = null, err = null;
+    var h1 = { 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }; if (cs) h1['X-Cookie'] = cs;
+    tries.push({ referer: ref + '/', headers: h1 });
+    if (!OKN) tries.push({ headers: cs ? { 'X-Cookie': cs } : {} });          // second way: no Referer at all
+    for (var ti = 0; ti < tries.length && !bl; ti++) {
+      try {
+        var r = await withTimeout(MediaHub.req(u, tries[ti]), 9000), b = await r.blob();
+        if (!b || !b.size || (b.type && !/^image\//i.test(b.type))) throw new Error('not an image (' + (b && b.type) + ' ' + (b && b.size) + ')');
+        bl = b;
+      } catch (e) { err = e; }
+    }
+    if (!bl) throw err || new Error('failed');
     return (BLOBS[u] = URL.createObjectURL(bl));
+  }
+  async function kitsuPoster(t) {
+    var k = clean(t).toLowerCase(); if (!k) return '';
+    if (Object.prototype.hasOwnProperty.call(KC, k)) return KC[k];
+    var j = await withTimeout(MediaHub.getJSON('https://kitsu.io/api/edge/anime?page%5Blimit%5D=1&filter%5Btext%5D=' + encodeURIComponent(clean(t))), 7000);
+    var a = j && j.data && j.data[0] && j.data[0].attributes, pi = a && a.posterImage;
+    var u = (pi && (pi.medium || pi.small || pi.large || pi.original)) || '';
+    KC[k] = u;
+    try { var ks = Object.keys(KC); if (ks.length > 600) delete KC[ks[0]]; localStorage.setItem('anime3rb_kitsu', JSON.stringify(KC)); } catch (e) {}
+    return u;
   }
   async function blobItems(items, ms) {
     items.forEach(function (it) { if (it.poster && BLOBS[it.poster]) it.poster = BLOBS[it.poster]; });
-    var todo = items.filter(function (it) { return it.poster && /^https?:/i.test(it.poster); }).slice(0, 36);
-    var n = 0, fail = 0, first = '';
-    async function worker() {
-      while (n < todo.length) {
-        var it = todo[n++];
-        try { it.poster = await blobOne(it.poster); } catch (e) { fail++; if (!first) first = String(e && e.message || e).slice(0, 70); }
+    var cand = items.filter(function (it) { return it.poster && /^https?:/i.test(it.poster) && !/kitsu\./i.test(it.poster); }).slice(0, 36);
+    var first = '', k1 = 0, k2 = 0, kf = 0;
+    async function phase1() {
+      if (SITEBAD || !cand.length) return;
+      await cookieJar();
+      var n = 0;
+      async function w() {
+        while (n < cand.length && !SITEBAD) {
+          var it = cand[n++];
+          try { it.poster = await blobOne(it.poster); OKN++; k1++; }
+          catch (e) { FAILN++; if (!first) first = String(e && e.message || e).slice(0, 60); if (!OKN && FAILN >= 4) SITEBAD = true; }
+        }
       }
+      await Promise.all([w(), w(), w(), w(), w(), w()]);
     }
-    var ws = []; for (var k = 0; k < 6; k++) ws.push(worker());
-    await Promise.race([Promise.all(ws), new Promise(function (r) { setTimeout(r, ms || 6000); })]);
-    try { MediaHub.note('anime3rb pics', todo.length + ' tried, ' + fail + ' failed' + (first ? ': ' + first : '')); } catch (e) {}
+    async function phase2() {
+      var rest = items.filter(function (it) { return it.poster && /^https?:/i.test(it.poster) && !/kitsu\./i.test(it.poster) && it.title; }).slice(0, 30), n = 0;
+      async function w() {
+        while (n < rest.length) {
+          var it = rest[n++];
+          try { var u = await kitsuPoster(it.title); if (u) { it.poster = u; k2++; } } catch (e) { kf++; }
+        }
+      }
+      await Promise.all([w(), w(), w()]);
+    }
+    await Promise.race([(async function () { await phase1(); await phase2(); })(), new Promise(function (r) { setTimeout(r, ms || 8000); })]);
+    try { MediaHub.note('anime3rb pics', 'site ' + k1 + ' ok / ' + FAILN + ' failed' + (first ? ' (' + first + ')' : '') + ' ; cookies ' + Object.keys(JAR || {}).join(',') + ' ; kitsu ' + k2 + ' ok / ' + kf + ' failed'); } catch (e) {}
     return items;
   }
   function tidy(t) {
@@ -647,7 +696,7 @@
       } catch (e) {}
       var gg = g.slice(0, 14), flat = [];
       gg.forEach(function (x) { x.items.forEach(function (i) { flat.push(i); }); });
-      await blobItems(flat, 6000);
+      await blobItems(flat, 8000);
       return pxGroups(gg);
     },
 
@@ -679,7 +728,7 @@
             var nx = nextLink(dS, uS, host(base)); if (!nx || nx === uS) break;
             try { var h2 = await getHtml(nx), extra2 = searchCards(h2, base), added = 0; extra2.forEach(function (x) { if (!seenS[x.id]) { seenS[x.id] = 1; out.push(x); added++; } }); if (!added) break; dS = parse(h2); uS = nx; } catch (e) { break; }
           }
-          await blobItems(out, 6000);
+          await blobItems(out, 8000);
           return pxItems(out);
         } catch (e) { last = (e && e.message) + ' ' + urls[ui].replace(base, '').slice(0, 30); }
       }
@@ -725,7 +774,11 @@
       var aTitle = ad !== doc ? h1Of(ad) : '';
       var pEl = POSTER_SEL ? ad.querySelector(POSTER_SEL) : null;
       var pu0 = (pEl && imgUrl(pEl, aurl)) || posterOf(ad, aurl, aTitle || pageTitle) || item.poster || (/logo|favicon|icon/i.test(metaOf(ad, 'og:image')) ? '' : metaOf(ad, 'og:image'));
-      if (pu0 && /^https?:/i.test(pu0) && !(MediaHub.proxy && MediaHub.proxy.url && pu0.indexOf(MediaHub.proxy.url) === 0)) { try { pu0 = await blobOne(pu0); } catch (e) {} }
+      if (pu0 && /^https?:/i.test(pu0) && !/kitsu\./i.test(pu0) && !(MediaHub.proxy && MediaHub.proxy.url && pu0.indexOf(MediaHub.proxy.url) === 0)) {
+        var okp = false;
+        if (!SITEBAD) { try { await cookieJar(); pu0 = await blobOne(pu0); okp = true; } catch (e) {} }
+        if (!okp) { try { var kp = await kitsuPoster(aTitle || pageTitle || item.title); if (kp) pu0 = kp; } catch (e) {} }
+      }
       return {
         seasons: seasons.length > 1 ? seasons : undefined, currentSeason: seasons.length > 1 ? curK : undefined,
         title: item.title || pageTitle, series: cleanSeries(aTitle || pageTitle || item.title) || undefined,

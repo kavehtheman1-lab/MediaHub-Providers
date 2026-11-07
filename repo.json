@@ -43,7 +43,7 @@
       "name": "Anime3rb",
       "id": "anime3rb",
       "url": "https://raw.githubusercontent.com/kavehtheman1-lab/MediaHub-Providers/main/providers/anime3rb.js",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "language": "ar",
       "types": [
         "Anime",
